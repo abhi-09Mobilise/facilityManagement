@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>FMS — New feature UI mockups</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --brand-navy:#1a3a6e;
+    --brand-navy-dark:#102a52;
+    --brand-navy-soft:#eaf0fa;
+    --brand-surface:#f5f7fb;
+    --brand-blue:#2563eb;
+    --brand-green:#16a34a;
+    --brand-amber:#d97706;
+    --brand-red:#dc2626;
+  }
+  body{background:var(--brand-surface);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a}
+  .navy{color:var(--brand-navy)}
+  .bg-navy{background:var(--brand-navy)}
+  .bg-navy-soft{background:var(--brand-navy-soft)}
+  .border-navy{border-color:var(--brand-navy)}
+  .ring-navy{--tw-ring-color:var(--brand-navy)}
+  .chip{display:inline-flex;align-items:center;gap:.25rem;padding:.125rem .5rem;border-radius:.375rem;font-size:.7rem;font-weight:600}
+  .btn-primary{background:var(--brand-navy);color:#fff;padding:.5rem 1rem;border-radius:.375rem;font-size:.875rem;font-weight:500;display:inline-flex;align-items:center;gap:.4rem}
+  .btn-outline{border:1px solid var(--brand-navy);color:var(--brand-navy);padding:.5rem 1rem;border-radius:.375rem;font-size:.875rem;font-weight:500;background:#fff;display:inline-flex;align-items:center;gap:.4rem}
+  .btn-ghost{color:var(--brand-navy);padding:.5rem 1rem;border-radius:.375rem;font-size:.875rem;font-weight:500;background:transparent}
+  .input{display:block;width:100%;border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem .75rem;font-size:.875rem;background:#fff}
+  .label{font-size:.8rem;font-weight:500;color:#374151;margin-bottom:.25rem;display:block}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:.5rem;padding:1.25rem}
+  .kpi-num{font-size:1.75rem;font-weight:700;color:var(--brand-navy);line-height:1}
+  .table-th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;font-weight:600;padding:.5rem .75rem;text-align:left}
+  .table-td{padding:.6rem .75rem;border-top:1px solid #f1f5f9;font-size:.875rem}
+  .nav-link{display:block;padding:.4rem .6rem;border-radius:.375rem;font-size:.85rem;color:#334155;cursor:pointer}
+  .nav-link:hover{background:#eff3fa;color:var(--brand-navy)}
+  .nav-link.active{background:var(--brand-navy);color:#fff;font-weight:600}
+  .group-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;font-weight:700;margin:1rem .6rem .25rem}
+  .mock-frame{background:#fff;border:1px solid #e5e7eb;border-radius:.75rem;box-shadow:0 4px 20px rgba(15,23,42,.04);overflow:hidden}
+  .mock-topbar{height:48px;background:var(--brand-navy);color:#fff;display:flex;align-items:center;padding:0 1.25rem;font-weight:600;letter-spacing:.02em}
+  .mock-body{padding:1.5rem;background:var(--brand-surface)}
+  .pill{padding:.125rem .5rem;border-radius:999px;font-size:.7rem;font-weight:600}
+  .pill-pending{background:#fef3c7;color:#92400e}
+  .pill-approved{background:#dcfce7;color:#166534}
+  .pill-rejected{background:#fee2e2;color:#991b1b}
+  .pill-checkin{background:#dbeafe;color:#1e3a8a}
+  .pill-checkout{background:#ede9fe;color:#5b21b6}
+  .tab-active{border-bottom:2px solid var(--brand-navy);color:var(--brand-navy);font-weight:600}
+  .tab-inactive{border-bottom:2px solid transparent;color:#64748b}
+  .gantt-cell{height:28px;border-radius:.25rem}
+  .three-d-stage{
+    background: radial-gradient(ellipse at center, #cdd9ed 0%, #8aa1cc 70%, #4a6494 100%);
+    display:flex;align-items:center;justify-content:center;
+    border-radius:.5rem;
+  }
+  .hotspot{position:absolute;width:28px;height:28px;border-radius:999px;background:#fff;border:2px solid var(--brand-navy);display:flex;align-items:center;justify-content:center;color:var(--brand-navy);font-weight:700;font-size:.75rem;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.15)}
+  .chat-bubble{position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:999px;background:var(--brand-navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.4rem;box-shadow:0 8px 24px rgba(20,46,87,.25);cursor:pointer}
+</style>
+</head>
+<body class="min-h-screen">
+
+<header class="border-b bg-white">
+  <div class="max-w-[1400px] mx-auto px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-bold navy">FMS — New feature UI mockups</h1>
+      <p class="text-xs text-slate-500">Visual only · no functionality wired · review and tell me what to change before code is written</p>
+    </div>
+    <div class="text-xs text-slate-500">v1 · 8 features · 15 screens</div>
+  </div>
+</header>
+
+<div class="max-w-[1400px] mx-auto grid grid-cols-[240px_1fr] gap-6 p-6">
+
+  <!-- ============== SIDEBAR ============== -->
+  <aside class="space-y-1">
+    <div class="group-title">F01 · Per-slot capacity</div>
+    <a href="#m-01-a" class="nav-link">Facility form section</a>
+
+    <div class="group-title">F02 · Two-stage approval</div>
+    <a href="#m-02-a" class="nav-link">Chain editor (tabs)</a>
+    <a href="#m-02-b" class="nav-link">Approvals inbox</a>
+
+    <div class="group-title">F03 · Public portal</div>
+    <a href="#m-03-a" class="nav-link">Tenant landing</a>
+    <a href="#m-03-b" class="nav-link">Sites + facilities</a>
+    <a href="#m-03-c" class="nav-link">Facility detail (public)</a>
+
+    <div class="group-title">F04 · 3D floor design</div>
+    <a href="#m-04-a" class="nav-link">3D viewer</a>
+
+    <div class="group-title">F05 · AI integration</div>
+    <a href="#m-05-a" class="nav-link">Describe button</a>
+    <a href="#m-05-b" class="nav-link">Chat widget</a>
+
+    <div class="group-title">F06 · Pantry</div>
+    <a href="#m-06-a" class="nav-link">Pantries list</a>
+    <a href="#m-06-b" class="nav-link">Pantry form / menu</a>
+    <a href="#m-06-c" class="nav-link">Booking — pantry order</a>
+
+    <div class="group-title">F07 · Reschedule via mail</div>
+    <a href="#m-07-a" class="nav-link">Confirmation email</a>
+    <a href="#m-07-b" class="nav-link">Reschedule modal</a>
+
+    <div class="group-title">F08 · Admin Gantt</div>
+    <a href="#m-08-a" class="nav-link">Timeline tab</a>
+  </aside>
+
+  <!-- ============== MOCKUPS ============== -->
+  <main class="space-y-12">
+
+  <!-- ============== F01 ============== -->
+  <section id="m-01-a">
+    <h2 class="text-xl font-bold navy mb-1">F01 · Per-slot capacity</h2>
+    <p class="text-sm text-slate-500 mb-4">New section appended to <code>FacilityFormPage</code>, just under "Operating hours".</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Edit facility · Olympic Pool</div>
+      <div class="mock-body space-y-4">
+        <div class="card">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="font-semibold navy">Slot capacities <span class="text-xs font-normal text-slate-500">(optional — overrides default capacity)</span></h3>
+              <p class="text-xs text-slate-500">Default capacity: <b>25</b>. Any range you list below replaces it for that window.</p>
+            </div>
+            <button class="btn-outline text-xs">+ Add slot</button>
+          </div>
+          <table class="w-full">
+            <thead><tr>
+              <th class="table-th">Day</th><th class="table-th">Start</th><th class="table-th">End</th>
+              <th class="table-th">Min</th><th class="table-th">Max</th><th class="table-th"></th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td class="table-td"><select class="input"><option>Mon</option></select></td>
+                <td class="table-td"><input class="input" value="09:00" /></td>
+                <td class="table-td"><input class="input" value="12:00" /></td>
+                <td class="table-td"><input class="input" value="2" /></td>
+                <td class="table-td"><input class="input" value="12" /></td>
+                <td class="table-td"><button class="text-red-600 text-sm">✕</button></td>
+              </tr>
+              <tr>
+                <td class="table-td"><select class="input"><option>Mon</option></select></td>
+                <td class="table-td"><input class="input" value="13:00" /></td>
+                <td class="table-td"><input class="input" value="17:00" /></td>
+                <td class="table-td"><input class="input" value="1" /></td>
+                <td class="table-td"><input class="input" value="8" /></td>
+                <td class="table-td"><button class="text-red-600 text-sm">✕</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="text-xs text-amber-700 mt-3">⚠ This range overlaps with Mon 09:00–12:00 — please adjust.</div>
+        </div>
+        <div class="flex gap-3 justify-end">
+          <button class="btn-ghost">Cancel</button>
+          <button class="btn-primary">Save facility</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F02 a ============== -->
+  <section id="m-02-a">
+    <h2 class="text-xl font-bold navy mb-1">F02 · Two-stage approval — chain editor</h2>
+    <p class="text-sm text-slate-500 mb-4">Existing chain editor on <code>FacilityFormPage</code> gains a tab toggle.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Edit facility · Conference Room A</div>
+      <div class="mock-body">
+        <div class="card">
+          <h3 class="font-semibold navy mb-3">Approval chain</h3>
+          <div class="flex gap-6 border-b text-sm">
+            <button class="px-3 py-2 tab-active">Check-in approvers</button>
+            <button class="px-3 py-2 tab-inactive">Check-out approvers</button>
+          </div>
+          <div class="pt-4 space-y-3">
+            <div class="flex items-center gap-3 p-3 border rounded">
+              <div class="bg-navy-soft navy w-8 h-8 rounded-full flex items-center justify-center font-semibold">1</div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">Department manager <span class="chip bg-slate-100 text-slate-600 ml-1">dynamic</span></div>
+                <div class="text-xs text-slate-500">Resolved at booking time from the booker's department</div>
+              </div>
+              <button class="text-slate-400">✕</button>
+            </div>
+            <div class="flex items-center gap-3 p-3 border rounded">
+              <div class="bg-navy-soft navy w-8 h-8 rounded-full flex items-center justify-center font-semibold">2</div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">Ritesh Aggarwal · Facility Manager</div>
+                <div class="text-xs text-slate-500">ritesh@acme.com</div>
+              </div>
+              <button class="text-slate-400">✕</button>
+            </div>
+            <button class="btn-outline text-xs">+ Add approver</button>
+          </div>
+          <div class="text-xs text-slate-500 mt-4">
+            <b>Check-in</b> approvers are notified when a booking is submitted.<br/>
+            <b>Check-out</b> approvers are notified after the booking ends (cleaning, returns, sign-off).
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F02 b ============== -->
+  <section id="m-02-b">
+    <h2 class="text-xl font-bold navy mb-1">F02 · Approvals inbox — stage chip</h2>
+    <p class="text-sm text-slate-500 mb-4">Each pending row shows a Check-in / Check-out badge.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Approvals · Pending</div>
+      <div class="mock-body">
+        <div class="card overflow-hidden p-0">
+          <table class="w-full">
+            <thead class="bg-slate-50"><tr>
+              <th class="table-th">Stage</th><th class="table-th">Booking</th><th class="table-th">Facility</th>
+              <th class="table-th">When</th><th class="table-th">Booker</th><th class="table-th"></th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td class="table-td"><span class="pill pill-checkin">Check-in</span></td>
+                <td class="table-td font-medium">#1042 · Quarterly review</td>
+                <td class="table-td">Conference Room A</td>
+                <td class="table-td">Mon 25 May · 14:00–15:30</td>
+                <td class="table-td">Priya S.</td>
+                <td class="table-td"><button class="btn-outline text-xs">Decide</button></td>
+              </tr>
+              <tr>
+                <td class="table-td"><span class="pill pill-checkout">Check-out</span></td>
+                <td class="table-td font-medium">#1031 · Yoga class</td>
+                <td class="table-td">Wellness Room</td>
+                <td class="table-td">Sun 24 May · 07:00–08:00 <span class="text-xs text-slate-400">(ended)</span></td>
+                <td class="table-td">Arjun M.</td>
+                <td class="table-td"><button class="btn-outline text-xs">Decide</button></td>
+              </tr>
+              <tr>
+                <td class="table-td"><span class="pill pill-checkin">Check-in</span></td>
+                <td class="table-td font-medium">#1045 · Lap practice</td>
+                <td class="table-td">Olympic Pool</td>
+                <td class="table-td">Tue 26 May · 07:00–08:00</td>
+                <td class="table-td">Ritesh A.</td>
+                <td class="table-td"><button class="btn-outline text-xs">Decide</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F03 a ============== -->
+  <section id="m-03-a">
+    <h2 class="text-xl font-bold navy mb-1">F03 · Public portal — tenant landing</h2>
+    <p class="text-sm text-slate-500 mb-4">Public route <code>/p/:slug</code>, no login. Renders outside AppLayout.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar" style="background:#fff;color:var(--brand-navy);border-bottom:1px solid #e5e7eb">acme.fms.app · Acme Corp <span class="text-xs font-normal ml-auto">Sign in →</span></div>
+      <div style="background:linear-gradient(135deg,var(--brand-navy),#3b5a8c);color:#fff;padding:3rem 2rem">
+        <h1 class="text-3xl font-extrabold">Acme Corp · Facilities</h1>
+        <p class="opacity-80 mt-2 max-w-xl">Pools, meeting rooms, gyms and more across our 3 campuses. Browse below — book once you're signed in.</p>
+      </div>
+      <div class="mock-body">
+        <h3 class="font-semibold navy mb-3">Sites</h3>
+        <div class="grid grid-cols-3 gap-4">
+          <div class="card"><div class="font-medium">Mumbai HQ</div><div class="text-xs text-slate-500 mt-1">12 facilities</div></div>
+          <div class="card"><div class="font-medium">Bangalore</div><div class="text-xs text-slate-500 mt-1">8 facilities</div></div>
+          <div class="card"><div class="font-medium">Pune</div><div class="text-xs text-slate-500 mt-1">5 facilities</div></div>
+        </div>
+        <h3 class="font-semibold navy mb-3 mt-6">Featured</h3>
+        <div class="grid grid-cols-4 gap-4">
+          <div class="card"><div class="h-24 bg-navy-soft rounded mb-2"></div><div class="font-medium text-sm">Olympic Pool</div><div class="text-xs text-slate-500">Mumbai · cap 25</div></div>
+          <div class="card"><div class="h-24 bg-navy-soft rounded mb-2"></div><div class="font-medium text-sm">Conf Room A</div><div class="text-xs text-slate-500">Mumbai · cap 12</div></div>
+          <div class="card"><div class="h-24 bg-navy-soft rounded mb-2"></div><div class="font-medium text-sm">Wellness Room</div><div class="text-xs text-slate-500">Pune · cap 20</div></div>
+          <div class="card"><div class="h-24 bg-navy-soft rounded mb-2"></div><div class="font-medium text-sm">The Atrium</div><div class="text-xs text-slate-500">Bangalore · cap 80</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F03 b ============== -->
+  <section id="m-03-b">
+    <h2 class="text-xl font-bold navy mb-1">F03 · Site facilities (public)</h2>
+    <p class="text-sm text-slate-500 mb-4">Drill-down from landing.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar" style="background:#fff;color:var(--brand-navy);border-bottom:1px solid #e5e7eb">acme.fms.app · Mumbai HQ</div>
+      <div class="mock-body">
+        <div class="text-xs text-slate-500 mb-2">Acme · Sites · <b class="navy">Mumbai HQ</b></div>
+        <h2 class="text-2xl font-bold navy mb-1">Mumbai HQ</h2>
+        <p class="text-sm text-slate-500 mb-4">12 facilities · open daily 06:00–22:00</p>
+        <div class="grid grid-cols-3 gap-4">
+          <div class="card">
+            <div class="h-32 bg-navy-soft rounded mb-3"></div>
+            <div class="font-medium">Olympic Pool</div>
+            <div class="text-xs text-slate-500 mb-2">Capacity 25 · 50m × 25m</div>
+            <button class="btn-outline text-xs w-full">View details</button>
+          </div>
+          <div class="card">
+            <div class="h-32 bg-navy-soft rounded mb-3"></div>
+            <div class="font-medium">Conference Room A</div>
+            <div class="text-xs text-slate-500 mb-2">Capacity 12 · projector + whiteboard</div>
+            <button class="btn-outline text-xs w-full">View details</button>
+          </div>
+          <div class="card">
+            <div class="h-32 bg-navy-soft rounded mb-3"></div>
+            <div class="font-medium">Rooftop Gym</div>
+            <div class="text-xs text-slate-500 mb-2">Capacity 30 · cardio + weights</div>
+            <button class="btn-outline text-xs w-full">View details</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F03 c ============== -->
+  <section id="m-03-c">
+    <h2 class="text-xl font-bold navy mb-1">F03 · Facility detail (public)</h2>
+    <p class="text-sm text-slate-500 mb-4">No booker data, no live availability — just spec sheet.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar" style="background:#fff;color:var(--brand-navy);border-bottom:1px solid #e5e7eb">acme.fms.app · Olympic Pool</div>
+      <div class="mock-body grid grid-cols-[2fr_1fr] gap-6">
+        <div>
+          <div class="h-64 bg-navy-soft rounded mb-4"></div>
+          <h2 class="text-2xl font-bold navy">Olympic Pool</h2>
+          <div class="text-sm text-slate-500 mb-3">Mumbai HQ · Floor 1</div>
+          <p class="text-sm leading-6 text-slate-700">A full 50m × 25m Olympic-size training pool with 8 lanes, electronic timing pads, and viewing gallery for spectators. Heated to 27°C year-round.</p>
+        </div>
+        <div class="space-y-3">
+          <div class="card">
+            <div class="text-xs text-slate-500">Capacity</div>
+            <div class="text-2xl font-bold navy">25</div>
+          </div>
+          <div class="card">
+            <div class="text-xs text-slate-500 mb-2">Operating hours</div>
+            <div class="text-sm">Mon–Fri · 06:00–22:00</div>
+            <div class="text-sm">Sat–Sun · 08:00–20:00</div>
+          </div>
+          <button class="btn-primary w-full justify-center">Sign in to book</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F04 ============== -->
+  <section id="m-04-a">
+    <h2 class="text-xl font-bold navy mb-1">F04 · 3D floor design</h2>
+    <p class="text-sm text-slate-500 mb-4">New route <code>/sites/:id/3d</code> — react-three-fiber viewer, hotspots → booking page.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Sites · Mumbai HQ · 3D view</div>
+      <div class="mock-body">
+        <div class="flex gap-3 mb-3">
+          <select class="input w-40"><option>Floor 3</option></select>
+          <button class="btn-outline text-xs">Reset view</button>
+          <button class="btn-outline text-xs">Fullscreen</button>
+          <div class="ml-auto text-xs text-slate-500">orbit · zoom · pan · click to book</div>
+        </div>
+        <div class="three-d-stage" style="height:380px;position:relative">
+          <!-- crude 3D floor mock with iso boxes -->
+          <svg viewBox="0 0 400 300" class="w-2/3 h-full">
+            <g>
+              <polygon points="50,210 200,260 350,210 200,160" fill="#f8fafc" stroke="#1a3a6e" stroke-width="2"/>
+              <polygon points="80,200 160,225 160,180 80,155" fill="#cfe0f4" stroke="#1a3a6e" stroke-width="1.5"/>
+              <polygon points="200,235 270,215 270,170 200,190" fill="#cfe0f4" stroke="#1a3a6e" stroke-width="1.5"/>
+              <polygon points="270,215 340,205 340,160 270,170" fill="#cfe0f4" stroke="#1a3a6e" stroke-width="1.5"/>
+              <polygon points="80,155 160,180 160,140 80,115" fill="#a9c4e6" stroke="#1a3a6e" stroke-width="1.5"/>
+            </g>
+          </svg>
+          <div class="hotspot" style="top:38%;left:28%">A</div>
+          <div class="hotspot" style="top:52%;left:54%">B</div>
+          <div class="hotspot" style="top:48%;left:72%">C</div>
+          <div class="hotspot" style="top:24%;left:30%">D</div>
+          <div class="absolute bottom-3 left-3 bg-white rounded shadow px-3 py-2 text-xs">
+            <b>Conference Room A</b> · Capacity 12 · <span class="navy">Click to book</span>
+          </div>
+        </div>
+        <div class="mt-3 text-xs text-slate-500">No 3D model yet for this floor? Admin can upload a .glb file under Masters → Floors.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F05 a ============== -->
+  <section id="m-05-a">
+    <h2 class="text-xl font-bold navy mb-1">F05 · AI · Describe button</h2>
+    <p class="text-sm text-slate-500 mb-4">Tiny ✨ button next to the Description field in FacilityFormPage.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Edit facility · Olympic Pool</div>
+      <div class="mock-body">
+        <div class="card max-w-2xl">
+          <label class="label">Description</label>
+          <div class="relative">
+            <textarea class="input" rows="5">A full 50m × 25m Olympic-size training pool with 8 lanes, electronic timing pads, and viewing gallery. Heated to 27°C year-round.</textarea>
+            <button class="absolute top-2 right-2 text-xs btn-outline">✨ Generate</button>
+          </div>
+          <div class="text-xs text-slate-500 mt-2">Click ✨ to draft or improve this description using the facility's name, type, and capacity.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F05 b ============== -->
+  <section id="m-05-b">
+    <h2 class="text-xl font-bold navy mb-1">F05 · AI · Chat widget</h2>
+    <p class="text-sm text-slate-500 mb-4">Floating bubble in the corner; opens a dialog. Available to all logged-in users.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Facility</div>
+      <div class="mock-body relative" style="min-height:380px">
+        <div class="card max-w-2xl opacity-50">
+          <div class="font-medium">Facility booking — pick a facility…</div>
+          <div class="text-sm text-slate-500">(rest of the page underneath)</div>
+        </div>
+        <div class="absolute" style="bottom:20px;right:24px;width:360px;background:#fff;border:1px solid #e5e7eb;border-radius:.75rem;box-shadow:0 12px 32px rgba(20,46,87,.2);overflow:hidden">
+          <div class="bg-navy text-white px-4 py-3 flex justify-between items-center"><b>AI Assistant</b><button class="opacity-70">✕</button></div>
+          <div class="p-3 space-y-2 text-sm" style="max-height:280px;overflow:auto">
+            <div class="bg-slate-100 rounded p-2 inline-block max-w-[80%]">Hi! What would you like to book?</div>
+            <div class="text-right"><div class="bg-navy-soft navy rounded p-2 inline-block max-w-[80%]">book the pool tomorrow 7am for 1 hr, 3 people</div></div>
+            <div class="bg-slate-100 rounded p-2 inline-block max-w-[80%]">Found <b>Olympic Pool</b> · Tue 7:00–8:00 · 6 of 25 seats taken. Confirm?</div>
+            <div class="text-right"><button class="btn-primary text-xs">Yes, book it</button> <button class="btn-outline text-xs">Change</button></div>
+          </div>
+          <div class="border-t p-2 flex gap-2">
+            <input class="input flex-1 text-sm" placeholder="Type a message…" />
+            <button class="btn-primary text-xs">Send</button>
+          </div>
+        </div>
+        <div class="chat-bubble">⌁</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F06 a ============== -->
+  <section id="m-06-a">
+    <h2 class="text-xl font-bold navy mb-1">F06 · Pantry · Masters list</h2>
+    <p class="text-sm text-slate-500 mb-4">New child under Masters in the sidebar.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Masters · Pantries</div>
+      <div class="mock-body">
+        <div class="flex justify-between mb-3">
+          <h3 class="font-semibold navy">Pantries</h3>
+          <button class="btn-primary text-sm">+ New pantry</button>
+        </div>
+        <div class="card overflow-hidden p-0">
+          <table class="w-full">
+            <thead class="bg-slate-50"><tr>
+              <th class="table-th">Name</th><th class="table-th">Site</th><th class="table-th">Menu items</th>
+              <th class="table-th">Status</th><th class="table-th"></th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="table-td font-medium">Café 4F</td><td class="table-td">Mumbai HQ</td><td class="table-td">12</td><td class="table-td"><span class="pill pill-approved">Active</span></td><td class="table-td"><button class="btn-outline text-xs">Edit</button></td></tr>
+              <tr><td class="table-td font-medium">Ground Canteen</td><td class="table-td">Mumbai HQ</td><td class="table-td">24</td><td class="table-td"><span class="pill pill-approved">Active</span></td><td class="table-td"><button class="btn-outline text-xs">Edit</button></td></tr>
+              <tr><td class="table-td font-medium">Pune Snacks</td><td class="table-td">Pune</td><td class="table-td">6</td><td class="table-td"><span class="pill pill-rejected">Inactive</span></td><td class="table-td"><button class="btn-outline text-xs">Edit</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F06 b ============== -->
+  <section id="m-06-b">
+    <h2 class="text-xl font-bold navy mb-1">F06 · Pantry form / menu editor</h2>
+    <p class="text-sm text-slate-500 mb-4">Pantry detail with inline menu items.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Masters · Pantries · Café 4F</div>
+      <div class="mock-body grid grid-cols-2 gap-6">
+        <div class="card">
+          <h3 class="font-semibold navy mb-3">Pantry</h3>
+          <label class="label">Name</label><input class="input mb-3" value="Café 4F" />
+          <label class="label">Site</label>
+          <select class="input mb-3"><option>Mumbai HQ</option></select>
+          <label class="label">Status</label>
+          <select class="input"><option>Active</option><option>Inactive</option></select>
+        </div>
+        <div class="card">
+          <div class="flex justify-between mb-3">
+            <h3 class="font-semibold navy">Menu</h3>
+            <button class="btn-outline text-xs">+ Add item</button>
+          </div>
+          <table class="w-full">
+            <thead><tr>
+              <th class="table-th">Item</th><th class="table-th">Meal</th><th class="table-th">Price</th><th></th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="table-td">Sandwich</td><td class="table-td">Lunch</td><td class="table-td">₹120</td><td class="table-td"><button class="text-red-600 text-sm">✕</button></td></tr>
+              <tr><td class="table-td">Espresso</td><td class="table-td">Any</td><td class="table-td">₹60</td><td class="table-td"><button class="text-red-600 text-sm">✕</button></td></tr>
+              <tr><td class="table-td">Fruit bowl</td><td class="table-td">Breakfast</td><td class="table-td">₹90</td><td class="table-td"><button class="text-red-600 text-sm">✕</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F06 c ============== -->
+  <section id="m-06-c">
+    <h2 class="text-xl font-bold navy mb-1">F06 · Booking — pantry order</h2>
+    <p class="text-sm text-slate-500 mb-4">New collapsible section on FacilityDetailPage when site has linked pantries.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Book · Olympic Pool</div>
+      <div class="mock-body space-y-3">
+        <div class="card">
+          <div class="text-sm text-slate-500">Existing booking form — date, time, guests, etc.</div>
+        </div>
+        <div class="card">
+          <div class="flex justify-between mb-3">
+            <div>
+              <h3 class="font-semibold navy">Order from pantry <span class="text-xs font-normal text-slate-500">(optional)</span></h3>
+              <p class="text-xs text-slate-500">Showing pantries available at Mumbai HQ</p>
+            </div>
+            <select class="input w-44"><option>Café 4F</option><option>Ground Canteen</option></select>
+          </div>
+          <table class="w-full">
+            <thead><tr><th class="table-th"></th><th class="table-th">Item</th><th class="table-th">Price</th><th class="table-th">Qty</th></tr></thead>
+            <tbody>
+              <tr><td class="table-td"><input type="checkbox" checked /></td><td class="table-td">Sandwich</td><td class="table-td">₹120</td><td class="table-td"><input class="input w-16" value="2" /></td></tr>
+              <tr><td class="table-td"><input type="checkbox" /></td><td class="table-td">Espresso</td><td class="table-td">₹60</td><td class="table-td"><input class="input w-16" value="0" /></td></tr>
+              <tr><td class="table-td"><input type="checkbox" checked /></td><td class="table-td">Fruit bowl</td><td class="table-td">₹90</td><td class="table-td"><input class="input w-16" value="1" /></td></tr>
+            </tbody>
+          </table>
+          <div class="text-right mt-2 text-sm"><b>Total: ₹330</b></div>
+        </div>
+        <div class="flex justify-end gap-3">
+          <button class="btn-ghost">Cancel</button>
+          <button class="btn-primary">Submit booking</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F07 a ============== -->
+  <section id="m-07-a">
+    <h2 class="text-xl font-bold navy mb-1">F07 · Confirmation email — new buttons</h2>
+    <p class="text-sm text-slate-500 mb-4">Existing template gains Reschedule + Cancel buttons. Token-protected, login required to act.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar" style="background:#f1f5f9;color:#334155">Inbox · Booking confirmed — Olympic Pool</div>
+      <div class="mock-body flex justify-center">
+        <div style="width:540px;background:#fff;border-radius:.5rem;overflow:hidden;border:1px solid #e5e7eb">
+          <div class="bg-navy text-white p-6">
+            <div class="text-xs uppercase opacity-70">Facility Booking</div>
+            <div class="text-xl font-bold mt-1">Booking confirmed</div>
+          </div>
+          <div class="p-6 text-sm leading-7">
+            <p>Hi Ritesh,</p>
+            <p>Your booking for <b>Olympic Pool</b> on <b>Tue 26 May · 07:00–08:00</b> has been confirmed.</p>
+            <div class="bg-slate-50 p-3 rounded my-3 text-xs">
+              Booking #1045 · 3 attendees · Mumbai HQ
+            </div>
+            <p>Plans changed? You can reschedule or cancel below. Links expire in 7 days.</p>
+            <div class="flex gap-3 mt-4">
+              <a class="btn-primary" style="background:#d97706">Reschedule</a>
+              <a class="btn-primary" style="background:#dc2626">Cancel</a>
+            </div>
+            <p class="text-xs text-slate-500 mt-6">If you didn't request this, ignore this email.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F07 b ============== -->
+  <section id="m-07-b">
+    <h2 class="text-xl font-bold navy mb-1">F07 · Reschedule modal</h2>
+    <p class="text-sm text-slate-500 mb-4">Opens on <code>/my-bookings?reschedule=ID</code>. Same capacity check runs server-side.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">My Bookings</div>
+      <div class="mock-body relative" style="min-height:340px">
+        <div class="card opacity-50">
+          <div class="text-sm text-slate-500">My bookings list underneath…</div>
+        </div>
+        <div class="absolute inset-0 flex items-center justify-center" style="background:rgba(15,23,42,.4)">
+          <div style="width:480px" class="bg-white rounded-lg shadow-xl">
+            <div class="p-5 border-b">
+              <h3 class="font-semibold navy">Reschedule booking #1045</h3>
+              <p class="text-xs text-slate-500 mt-1">Olympic Pool · current slot Tue 26 May · 07:00–08:00</p>
+            </div>
+            <div class="p-5 space-y-3">
+              <div>
+                <label class="label">New date</label>
+                <input class="input" type="date" value="2026-05-27" />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div><label class="label">Start</label><input class="input" type="time" value="07:00" /></div>
+                <div><label class="label">End</label><input class="input" type="time" value="08:00" /></div>
+              </div>
+              <div class="text-xs text-green-700 bg-green-50 p-2 rounded">✓ 6 of 25 seats available in that slot.</div>
+            </div>
+            <div class="p-4 border-t flex justify-end gap-2">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Reschedule</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== F08 ============== -->
+  <section id="m-08-a">
+    <h2 class="text-xl font-bold navy mb-1">F08 · Admin Gantt — Timeline tab</h2>
+    <p class="text-sm text-slate-500 mb-4">New tab on <code>/dashboard</code>. vis-timeline under the hood.</p>
+    <div class="mock-frame">
+      <div class="mock-topbar">Dashboard</div>
+      <div class="mock-body">
+        <div class="flex gap-6 border-b text-sm mb-4">
+          <button class="px-3 py-2 tab-inactive">Overview</button>
+          <button class="px-3 py-2 tab-active">Timeline</button>
+        </div>
+        <div class="flex gap-3 mb-3">
+          <select class="input w-44"><option>Mumbai HQ</option></select>
+          <div class="flex border rounded overflow-hidden text-xs">
+            <button class="px-3 py-1 bg-navy text-white">Today</button>
+            <button class="px-3 py-1">Week</button>
+            <button class="px-3 py-1">Month</button>
+          </div>
+          <input class="input w-40" type="date" value="2026-05-25" />
+        </div>
+
+        <div class="card p-0 overflow-hidden">
+          <div class="grid grid-cols-[140px_1fr] text-xs">
+            <div class="bg-slate-50 p-2"></div>
+            <div class="bg-slate-50 p-2 grid grid-cols-9 text-center text-slate-500 font-medium">
+              <div>09</div><div>10</div><div>11</div><div>12</div><div>13</div><div>14</div><div>15</div><div>16</div><div>17</div>
+            </div>
+
+            <div class="p-2 font-medium border-t">Olympic Pool</div>
+            <div class="p-2 border-t relative" style="height:44px">
+              <div class="gantt-cell absolute" style="left:0%;width:18%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Ritesh</span>
+              </div>
+              <div class="gantt-cell absolute" style="left:34%;width:28%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Swim club</span>
+              </div>
+              <div class="gantt-cell absolute" style="left:78%;width:14%;background:#f59e0b;top:8px">
+                <span class="text-white text-xs pl-2">Priya (pending)</span>
+              </div>
+            </div>
+
+            <div class="p-2 font-medium border-t">Conference A</div>
+            <div class="p-2 border-t relative" style="height:44px">
+              <div class="gantt-cell absolute" style="left:12%;width:28%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Standup</span>
+              </div>
+              <div class="gantt-cell absolute" style="left:55%;width:40%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Quarterly review</span>
+              </div>
+            </div>
+
+            <div class="p-2 font-medium border-t">Rooftop Gym</div>
+            <div class="p-2 border-t relative" style="height:44px">
+              <div class="gantt-cell absolute" style="left:0%;width:22%;background:#94a3b8;top:8px">
+                <span class="text-white text-xs pl-2">cancelled</span>
+              </div>
+              <div class="gantt-cell absolute" style="left:60%;width:25%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Yoga</span>
+              </div>
+            </div>
+
+            <div class="p-2 font-medium border-t">Wellness Room</div>
+            <div class="p-2 border-t relative" style="height:44px">
+              <div class="gantt-cell absolute" style="left:30%;width:16%;background:var(--brand-navy);top:8px">
+                <span class="text-white text-xs pl-2">Therapy</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3 flex gap-4 text-xs text-slate-500">
+          <span><span class="inline-block w-3 h-3 rounded mr-1" style="background:var(--brand-navy)"></span>Approved</span>
+          <span><span class="inline-block w-3 h-3 rounded mr-1" style="background:#f59e0b"></span>Pending</span>
+          <span><span class="inline-block w-3 h-3 rounded mr-1" style="background:#94a3b8"></span>Cancelled</span>
+          <span class="ml-auto">Click a block → booking detail. Click a facility name → filter.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="text-center text-xs text-slate-400 pt-8">
+    End of mockups · 15 screens · once you approve I'll start writing code feature-by-feature.
+  </div>
+  </main>
+</div>
+
+<script>
+  // highlight current section in sidebar
+  const links = document.querySelectorAll('.nav-link');
+  const sections = [...document.querySelectorAll('main section')];
+  function update(){
+    const y = window.scrollY + 120;
+    let active = sections[0];
+    for(const s of sections){ if(s.offsetTop <= y) active = s; }
+    links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#'+active.id));
+  }
+  window.addEventListener('scroll', update);
+  update();
+</script>
+
+</body>
+</html>
