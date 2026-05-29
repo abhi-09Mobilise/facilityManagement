@@ -57,6 +57,8 @@ async function isActiveUserInTenant(conn, userId, tenantId) {
  * Returns { stage, stepsCreated, firstApproverId, firstApprovalId, materialized: [...] }
  */
 async function materializeChain({ conn, bookingId, facility, booker, stage }) {
+  // 'notification' stage is resolved by resolveRecipients below - it never
+  // creates booking_approvals rows so it doesn't gate approval workflow.
   const stageVal = stage === 'checkout' ? 'checkout' : 'checkin';
   const chain = await loadChain(conn, facility.id, stageVal);
   if (chain.length === 0) {
@@ -125,4 +127,40 @@ async function materializeChain({ conn, bookingId, facility, booker, stage }) {
   return { stage: stageVal, stepsCreated, firstApproverId, firstApprovalId, materialized };
 }
 
-module.exports = { materializeChain };
+/**
+ * Resolve a chain stage to a list of recipient user ids + emails WITHOUT
+ * inserting any booking_approvals rows. Used by the 'notification' stage:
+ * the booking flow doesn't block on these, it just emails them after
+ * approval/cancellation.
+ *
+ * Returns: [{ user_id, email, name, lname, step_order }]
+ */
+async function resolveRecipients({ conn, facility, booker, stage }) {
+  const chain = await loadChain(conn, facility.id, stage);
+  if (chain.length === 0) return [];
+  const out = [];
+  for (const step of chain) {
+    let userId = null;
+    if (step.approver_kind === 'user') {
+      if (await isActiveUserInTenant(conn, step.approver_user_id, booker.tenant_id)) {
+        userId = step.approver_user_id;
+      }
+    } else if (step.approver_kind === 'dynamic_dept_manager') {
+      const mgrId = await resolveDeptManager(conn, booker.department_id);
+      if (mgrId && await isActiveUserInTenant(conn, mgrId, booker.tenant_id)) {
+        userId = mgrId;
+      }
+    }
+    if (!userId) continue;
+    const [rows] = await conn.execute(
+      'SELECT id, email, name, lname FROM `users` WHERE id = ? LIMIT 1',
+      [userId]
+    );
+    if (rows.length > 0 && rows[0].email) {
+      out.push({ user_id: rows[0].id, email: rows[0].email, name: rows[0].name, lname: rows[0].lname, step_order: step.step_order });
+    }
+  }
+  return out;
+}
+
+module.exports = { materializeChain, resolveRecipients };

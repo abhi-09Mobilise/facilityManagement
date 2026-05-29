@@ -20,7 +20,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Menu, LogOut, Building2, Globe, Users, Building, Layers,
+  Menu, LogOut, Building2, Users, Building, Layers,
   Sparkles, UsersRound, UtensilsCrossed, CalendarCheck, FolderCheck, BookOpen,
   X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee,
 } from 'lucide-react';
@@ -57,7 +57,6 @@ const DASHBOARD: NavItem = {
 
 const PLATFORM: NavItem[] = [
   { to: '/admin/tenants', label: 'Tenants', icon: <Building2 className="h-4 w-4" />, roles: ['super_admin'] },
-  { to: '/admin/lookups', label: 'Lookups', icon: <Globe className="h-4 w-4" />,     roles: ['super_admin'] },
 ];
 
 const MASTERS: NavItem[] = [
@@ -273,7 +272,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         className="hidden md:block fixed left-0 z-20 border-r bg-white"
         style={{ top: HEADER_H, bottom: 0, width: SIDEBAR_W }}
       >
-        <div className="h-full overflow-y-auto">{navList}</div>
+        {/* Sidebar stays scrollable in case the nav outgrows the viewport,
+            but the scrollbar itself is hidden — cleaner look, matches the
+            mockup. Works in Chrome / Edge / Safari via ::-webkit-scrollbar
+            and Firefox via scrollbar-width:none. */}
+        <div className="h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {navList}
+        </div>
       </aside>
 
       {/* ============ MOBILE SLIDE-OVER ============ */}
@@ -298,7 +303,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 <X className="h-5 w-5" />
               </Button>
             </div>
-            <div className="flex-1 overflow-y-auto">{navList}</div>
+            <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {navList}
+            </div>
           </aside>
         </>
       )}

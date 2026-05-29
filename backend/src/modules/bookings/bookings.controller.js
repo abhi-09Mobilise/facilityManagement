@@ -23,7 +23,7 @@ const { query, withTransaction } = require('../../db/pool');
 const { ok, created, fail, notFound } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull } = require('../../utils/tenantScope');
-const { materializeChain } = require('./chainMaterializer');
+const { materializeChain, resolveRecipients } = require('./chainMaterializer');
 const { issueToken } = require('../../utils/approvalActionTokens');
 const bookingActionTokens = require('../../utils/bookingActionTokens');
 const slotOverrides = require('../facilities/slotOverrides.controller'); // F01 effectiveCapacity
@@ -52,12 +52,151 @@ async function loadBooker(userId) {
 
 async function loadFacility(facilityId) {
   const rows = await query(
-    'SELECT id, tenant_id, site_id, name, type, capacity, requires_approval, ' +
-    '       shared_booking, status, trash ' +
+    'SELECT id, tenant_id, site_id, name, type, capacity, offline_capacity, ' +
+    '       min_advance_minutes, max_advance_days, max_per_user_per_day, ' +
+    '       max_per_user_per_week, max_per_user_per_month, ' +
+    '       requires_approval, shared_booking, status, trash ' +
     '  FROM `facilities` WHERE id = ? LIMIT 1',
     [facilityId]
   );
   return rows[0] || null;
+}
+
+// ---- F? Advance booking rules ----------------------------------------
+//
+// Five optional rules live on the facility row (all NULL = unlimited):
+//
+//   min_advance_minutes        - reject if (start_at - now) < N minutes
+//   max_advance_days           - reject if start_at is more than N days from now
+//   max_per_user_per_day       - cap active bookings per booker per calendar day
+//   max_per_user_per_week      - cap active bookings per booker per Mon-Sun week
+//   max_per_user_per_month     - cap active bookings per booker per calendar month
+//
+// Super_admin + tenant_admin bypass everything (admin override).
+// Cancelled / rejected bookings are excluded from the count - the user
+// confirmed they should "free up the slot".
+// Week boundary = Monday 00:00 -> next Monday 00:00 (user pick).
+//
+// Returns { ok: true } or { ok: false, code, msg, status }.
+async function checkAdvanceRules(facility, startAt, userId, userRole, opts = {}) {
+  // Admin bypass.
+  if (userRole === 'super_admin' || userRole === 'tenant_admin') {
+    return { ok: true };
+  }
+
+  const startMs = new Date(startAt).getTime();
+  const nowMs   = Date.now();
+
+  // Lead time guard.
+  const minAdv = Number(facility.min_advance_minutes);
+  if (Number.isFinite(minAdv) && minAdv > 0) {
+    const leadMin = (startMs - nowMs) / 60000;
+    if (leadMin < minAdv) {
+      return {
+        ok: false,
+        code: 'MIN_ADVANCE',
+        status: 422,
+        msg: `This facility requires booking at least ${minAdv} minute(s) in advance.`,
+      };
+    }
+  }
+  // Max-advance guard.
+  const maxDays = Number(facility.max_advance_days);
+  if (Number.isFinite(maxDays) && maxDays > 0) {
+    const leadDays = (startMs - nowMs) / 86400000;
+    if (leadDays > maxDays) {
+      return {
+        ok: false,
+        code: 'MAX_ADVANCE',
+        status: 422,
+        msg: `This facility can't be booked more than ${maxDays} day(s) in advance.`,
+      };
+    }
+  }
+
+  // Per-user count limits - bail early if none configured.
+  const lDay   = Number(facility.max_per_user_per_day);
+  const lWeek  = Number(facility.max_per_user_per_week);
+  const lMonth = Number(facility.max_per_user_per_month);
+  const wantDay   = Number.isFinite(lDay)   && lDay   > 0;
+  const wantWeek  = Number.isFinite(lWeek)  && lWeek  > 0;
+  const wantMonth = Number.isFinite(lMonth) && lMonth > 0;
+  if (!wantDay && !wantWeek && !wantMonth) return { ok: true };
+
+  // Compute the three windows (local-server time; mysql stores as DATETIME
+  // without timezone). All boundaries are anchored on the booking's
+  // start_at date so the rule reads naturally as "per booking-day".
+  const d = new Date(startAt);
+  // Day = midnight -> next midnight of start_at's date.
+  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
+  const dayEnd   = new Date(dayStart.getTime() + 86400000);
+  // Week = Monday 00:00 -> next Monday 00:00. JS Date.getDay() returns 0=Sun..6=Sat.
+  const dow = d.getDay();
+  const mondayOffset = (dow === 0 ? -6 : 1 - dow); // sun -> back 6, mon -> 0, tue -> back 1...
+  const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + mondayOffset, 0, 0, 0);
+  const weekEnd   = new Date(weekStart.getTime() + 7 * 86400000);
+  // Month = 1st of month 00:00 -> 1st of next month 00:00.
+  const monthStart = new Date(d.getFullYear(), d.getMonth(),     1, 0, 0, 0);
+  const monthEnd   = new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0);
+
+  const fmt = (dt) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  };
+
+  // Helper - count this user's active bookings whose start_at lies in [s, e).
+  // Cancelled / rejected excluded (user confirmed cancelled frees the slot).
+  // opts.excludeBookingId lets reschedule exclude the booking being moved.
+  async function countIn(s, e) {
+    const params = [facility.id, userId, fmt(s), fmt(e)];
+    let sql =
+      'SELECT COUNT(*) AS cnt FROM `bookings` ' +
+      ' WHERE facility_id = ? AND user_id = ? AND trash = 0 ' +
+      "   AND status IN ('pending', 'approved') " +
+      '   AND start_at >= ? AND start_at < ? ';
+    if (opts.excludeBookingId) {
+      sql += 'AND id <> ? ';
+      params.push(opts.excludeBookingId);
+    }
+    const r = await query(sql, params);
+    return Number(r[0]?.cnt || 0);
+  }
+
+  if (wantDay) {
+    const used = await countIn(dayStart, dayEnd);
+    // We're about to add ONE more booking; reject when used+1 would exceed cap.
+    if (used + 1 > lDay) {
+      return {
+        ok: false,
+        code: 'CAP_DAY',
+        status: 422,
+        msg: `You've reached the daily limit of ${lDay} booking(s) for this facility.`,
+      };
+    }
+  }
+  if (wantWeek) {
+    const used = await countIn(weekStart, weekEnd);
+    if (used + 1 > lWeek) {
+      return {
+        ok: false,
+        code: 'CAP_WEEK',
+        status: 422,
+        msg: `You've reached the weekly limit of ${lWeek} booking(s) for this facility (week starts Monday).`,
+      };
+    }
+  }
+  if (wantMonth) {
+    const used = await countIn(monthStart, monthEnd);
+    if (used + 1 > lMonth) {
+      return {
+        ok: false,
+        code: 'CAP_MONTH',
+        status: 422,
+        msg: `You've reached the monthly limit of ${lMonth} booking(s) for this facility.`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 /**
@@ -102,7 +241,14 @@ async function sumOverlapAttendees(runner, facilityId, startAt, endAt, opts = {}
 async function checkAvailability(facility, startAt, endAt, needAttendees = 1, opts = {}) {
   // F01 - resolve effective capacity from per-slot overrides if any match.
   const eff = await slotOverrides.effectiveCapacity(facility.id, startAt, endAt);
-  const capacity = Math.max(0, Number(eff.matched ? eff.max : facility.capacity) || 0);
+ 
+  // Per-slot override wins; otherwise fall back to (facility.capacity - offline).
+  // offline_capacity is seats held back from the system (VIPs, walk-ins,
+  // maintenance, etc) — never bookable through the app.
+  const baseCap = Number(facility.capacity) || 0;
+  const offCap  = Number(facility.offline_capacity) || 0;
+  const onlineCap = Math.max(0, baseCap - offCap);
+  const capacity = Math.max(0, Number(eff.matched ? eff.max : onlineCap) || 0);
   const minAttendees = eff.matched ? Number(eff.min) : 1;
   const mode = facility.shared_booking ? 'shared' : 'exclusive';
   const taken = await sumOverlapAttendees(query, facility.id, startAt, endAt, opts);
@@ -166,6 +312,28 @@ exports.check = asyncHandler(async function (req, res) {
   }
 
   const a = await checkAvailability(facility, startAt, endAt, need);
+  console.log(a)
+  // F09 - which desk ids are already taken in this exact window. Used by the
+  // booker UI to grey out unavailable chairs in the layout picker.
+  //
+  // desk_id may be a single id ("C-03") or a comma-joined list ("C-03,C-04")
+  // when the booker claimed several chairs at once. Split + dedupe here so
+  // the UI gets the full set.
+  const occupiedRows = await query(
+    'SELECT desk_id ' +
+    '  FROM `bookings` ' +
+    ' WHERE facility_id = ? AND trash = 0 ' +
+    "   AND status IN ('pending', 'approved', 'completed') " +
+    '   AND desk_id IS NOT NULL ' +
+    '   AND start_at < ? AND end_at > ?',
+    [facilityId, endAt, startAt]
+  );
+  const occupiedSet = new Set();
+  for (const r of occupiedRows) {
+    String(r.desk_id || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => occupiedSet.add(id));
+  }
+  const occupied_desks = Array.from(occupiedSet);
+
   return ok(res, {
     conflict: !a.ok,
     mode: a.mode,
@@ -174,6 +342,7 @@ exports.check = asyncHandler(async function (req, res) {
     seats_remaining: a.seatsRemaining,
     min_attendees: a.minAttendees || 1,
     reason: a.reason || null,
+    occupied_desks,
   });
 });
 
@@ -202,6 +371,11 @@ exports.create = asyncHandler(async function (req, res) {
     return fail(res, 'Forbidden', 403);
   }
 
+  // Advance-booking rules (lead time, max horizon, per-user caps).
+  // Admins bypass; cancelled bookings excluded from caps.
+  const advCheck = await checkAdvanceRules(facility, startAt, req.user.id, req.user.role);
+  if (!advCheck.ok) return fail(res, advCheck.msg, advCheck.status);
+
   const guests = Array.isArray(b.guests) ? b.guests.filter(
     (g) => g && (g.email || g.fname || g.lname || g.contact_no || g.contactNo)
   ) : [];
@@ -209,10 +383,13 @@ exports.create = asyncHandler(async function (req, res) {
 
   // Cheap UX guard - reject up front when the booker's own count alone
   // exceeds capacity. The real check happens inside the txn below.
-  if (facility.capacity > 0 && attendeeCount > facility.capacity) {
+  // Friendly upfront guard - compare against the BOOKABLE cap, not the
+  // raw total. offline_capacity is reserved outside the system.
+  const onlineCap = Math.max(0, (Number(facility.capacity) || 0) - (Number(facility.offline_capacity) || 0));
+  if (onlineCap > 0 && attendeeCount > onlineCap) {
     return fail(
       res,
-      `This facility seats ${facility.capacity}. You are trying to book ${attendeeCount} (you + ${guests.length} guests).`,
+      `This facility has ${onlineCap} bookable seat(s). You are trying to book ${attendeeCount} (you + ${guests.length} guests).`,
       409
     );
   }
@@ -257,11 +434,14 @@ exports.create = asyncHandler(async function (req, res) {
     txResult = await withTransaction(async function (conn) {
       const [r] = await conn.execute(
         'INSERT INTO `bookings` ' +
-        '   (tenant_id, facility_id, user_id, department_id, title, start_at, end_at, ' +
+        '   (tenant_id, facility_id, desk_id, user_id, department_id, title, start_at, end_at, ' +
         '    repeat_type, status, remarks, dont_disturb, attendee_count) ' +
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
         [
-          booker.tenant_id, facilityId, booker.id, departmentId,
+          booker.tenant_id, facilityId,
+          // F09 - optional desk id (string from facility.layout_json.desks[].id)
+          b.desk_id ? String(b.desk_id) : null,
+          booker.id, departmentId,
           b.title || null, startAt, endAt,
           b.repeat_type || 'none',
           b.remarks || null,
@@ -318,11 +498,27 @@ exports.create = asyncHandler(async function (req, res) {
         { forShare: true }
       );
 
+      // Re-resolve effective capacity inside the txn so any slot override
+      // (F01) takes priority over the bare facility.capacity. This guards
+      // shared facilities where the operator caps a peak slot below the
+      // room's nominal size (e.g. 5-seat cap during a 1-2pm lunch window
+      // even though the room seats 20).
+      // The bare facility cap is the BOOKABLE one (capacity - offline);
+      // offline seats are held back from every shared check.
+      const effRace = await slotOverrides.effectiveCapacity(facilityId, startAt, endAt);
+      console.log(effRace)
+      const bookableCap = Math.max(0,
+        (Number(facility.capacity) || 0) - (Number(facility.offline_capacity) || 0)
+      );
+      const raceCapacity = Math.max(0, Number(
+        effRace.matched ? effRace.max : bookableCap
+      ) || 0);
+
       if (facility.shared_booking) {
-        if (totalInWindow > facility.capacity) {
+        if (totalInWindow > raceCapacity) {
           // Custom marker so the outer catch can produce a clean 409.
           const e = new Error('CAPACITY_EXCEEDED');
-          e._capacity = facility.capacity;
+          e._capacity = raceCapacity;
           e._totalInWindow = totalInWindow;
           throw e;
         }
@@ -331,6 +527,67 @@ exports.create = asyncHandler(async function (req, res) {
         // collided with a concurrent insert.
         if (totalInWindow > attendeeCount) {
           throw new Error('SLOT_TAKEN');
+        }
+      }
+
+      // F09 - if the booker claimed one or more chairs check none of them
+      // are also held by another active booking in this window. desk_id is
+      // stored as a comma-joined list when the booker claims multiple
+      // chairs at once; we split, then scan overlapping rows with FOR SHARE
+      // and reject if any other booking carries any of the same chair ids.
+      if (b.desk_id) {
+        const claimed = String(b.desk_id).split(',').map((s) => s.trim()).filter(Boolean);
+        if (claimed.length > 0) {
+          // F09 - VIP defence. Re-load the facility's layout_json and
+          // reject if any claimed chair is marked isVip:true. The booker
+          // UI hides VIP chairs but a malicious client could POST one by
+          // id, so this is the authoritative check.
+          const [layoutRows] = await conn.execute(
+            'SELECT layout_json FROM `facilities` WHERE id = ? LIMIT 1',
+            [facilityId]
+          );
+          if (layoutRows[0] && layoutRows[0].layout_json) {
+            try {
+              const layoutRaw = layoutRows[0].layout_json;
+              const layout = typeof layoutRaw === 'string' ? JSON.parse(layoutRaw) : layoutRaw;
+              const objs = (layout && Array.isArray(layout.objects)) ? layout.objects : [];
+              const vipSet = new Set(
+                objs.filter((o) => o && o.type === 'chair' && o.isVip).map((o) => String(o.id))
+              );
+              const vipClash = claimed.find((id) => vipSet.has(id));
+              if (vipClash) {
+                const e = new Error('DESK_VIP');
+                e._deskId = vipClash;
+                throw e;
+              }
+            } catch (parseErr) {
+              if (parseErr && parseErr.message === 'DESK_VIP') throw parseErr;
+              // Malformed layout JSON - log and fall through; we'd
+              // rather book than block on a parse failure.
+              console.error('[bookings.create] layout_json parse failed for vip check:', parseErr && parseErr.message);
+            }
+          }
+
+          const [otherRows] = await conn.execute(
+            'SELECT id, desk_id ' +
+            '  FROM `bookings` ' +
+            ' WHERE facility_id = ? AND id <> ? ' +
+            '   AND trash = 0 ' +
+            "   AND status IN ('pending', 'approved', 'completed') " +
+            '   AND desk_id IS NOT NULL ' +
+            '   AND start_at < ? AND end_at > ? FOR SHARE',
+            [facilityId, bookingId, endAt, startAt]
+          );
+          const takenSet = new Set();
+          for (const row of otherRows) {
+            String(row.desk_id || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => takenSet.add(id));
+          }
+          const clash = claimed.find((id) => takenSet.has(id));
+          if (clash) {
+            const e = new Error('DESK_TAKEN');
+            e._deskId = clash;
+            throw e;
+          }
         }
       }
 
@@ -364,14 +621,32 @@ exports.create = asyncHandler(async function (req, res) {
     if (e && e.message === 'SLOT_TAKEN') {
       return fail(res, 'That slot was just booked by someone else. Pick another time.', 409);
     }
+    if (e && e.message === 'DESK_TAKEN') {
+      return fail(
+        res,
+        `Desk ${e._deskId} was just claimed by someone else for this time slot. Pick another chair.`,
+        409
+      );
+    }
+    if (e && e.message === 'DESK_VIP') {
+      // Defensive 403 - the booker UI never offers VIP chairs, so this
+      // can only happen via a tampered request.
+      return fail(
+        res,
+        `Chair ${e._deskId} is reserved and can't be booked.`,
+        403
+      );
+    }
     throw e;
   }
 
   if (txResult.firstApprovalId && txResult.firstApproverId) {
     console.log(
-      `[bookings.create] booking #${txResult.bookingId} - kicking approval email to user #${txResult.firstApproverId} (step 1)`
+      `[bookings.create] booking #${txResult.bookingId} - kicking approval email to user #${txResult.firstApproverId} (step 1)` +
+      ` + submitted email to booker #${booker.id}`
     );
     (async () => {
+      // Approver (action needed) + booker (submitted) emails fire in parallel.
       try {
         const token = await issueToken(txResult.firstApprovalId);
         await _sendApprovalEmailWithToken({
@@ -381,15 +656,19 @@ exports.create = asyncHandler(async function (req, res) {
       } catch (e) {
         console.error('[bookings.create] first-step email failed:', e && e.message);
       }
+      try { await _sendBookingSubmittedEmail(txResult.bookingId); }
+      catch (e) { console.error('[bookings.create] submitted email failed:', e && e.message); }
     })();
   } else if (facility.requires_approval) {
     console.log(
       `[bookings.create] booking #${txResult.bookingId} - no approver could be resolved (auto-approved)`
     );
     // F07 - auto-approved path: still email the booker with reschedule/cancel links.
+    // F09 - and FYI emails to every facility notification recipient.
     (async () => {
       try { await _sendBookingConfirmedEmail(txResult.bookingId); }
       catch (e) { console.error('[bookings.create] confirm email failed:', e && e.message); }
+      _sendFacilityNotifications(txResult.bookingId, 'approved');
     })();
   } else {
     console.log(
@@ -398,6 +677,7 @@ exports.create = asyncHandler(async function (req, res) {
     (async () => {
       try { await _sendBookingConfirmedEmail(txResult.bookingId); }
       catch (e) { console.error('[bookings.create] confirm email failed:', e && e.message); }
+      _sendFacilityNotifications(txResult.bookingId, 'approved');
     })();
   }
 
@@ -643,6 +923,9 @@ exports.cancel = asyncHandler(async function (req, res) {
     );
   });
 
+  // F09 - notify the facility's notification chain that the booking was cancelled.
+  _sendFacilityNotifications(id, 'cancelled');
+
   return ok(res, null, 'Booking cancelled');
 });
 
@@ -672,21 +955,235 @@ async function _sendBookingConfirmedEmail(bookingId) {
     bookingActionTokens.issueToken(bookingId, b.user_id, 'cancel'),
   ]);
 
+  const bookerFullName = [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null;
+  const startStr = typeof b.start_at === 'string' ? b.start_at : new Date(b.start_at).toISOString().replace('T', ' ').slice(0, 19);
+  const endStr   = typeof b.end_at   === 'string' ? b.end_at   : new Date(b.end_at  ).toISOString().replace('T', ' ').slice(0, 19);
+
   mailer.bookingConfirmed({
     to: b.booker_email,
-    bookerName: [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null,
+    bookerName: bookerFullName,
     bookingId: b.id,
     facilityName: b.facility_name,
     facilityType: b.facility_type,
-    startAt: typeof b.start_at === 'string' ? b.start_at : new Date(b.start_at).toISOString().replace('T', ' ').slice(0, 19),
-    endAt:   typeof b.end_at   === 'string' ? b.end_at   : new Date(b.end_at  ).toISOString().replace('T', ' ').slice(0, 19),
+    startAt: startStr,
+    endAt:   endStr,
     attendeeCount: b.attendee_count,
     rescheduleToken: rToken,
     cancelToken: cToken,
   });
+
+  // Fan out to every guest with an email - they get the same approval
+  // notice (no reschedule/cancel tokens, only the booker can do that).
+  try {
+    const guestRows = await query(
+      'SELECT fname, lname, email FROM `booking_guests` WHERE booking_id = ? AND email IS NOT NULL AND email <> ""',
+      [bookingId]
+    );
+    for (const g of guestRows) {
+      mailer.bookingNotification({
+        to: g.email,
+        recipientName: [g.fname, g.lname].filter(Boolean).join(' ') || null,
+        event: 'approved',
+        bookerName: bookerFullName,
+        facilityName: b.facility_name,
+        facilityType: b.facility_type,
+        startAt: startStr, endAt: endStr,
+        attendeeCount: b.attendee_count,
+        title: null,
+      });
+    }
+  } catch (e) {
+    console.error('[bookings.confirm] guest fan-out failed:', e && e.message);
+  }
 }
 
 exports._sendBookingConfirmedEmail = _sendBookingConfirmedEmail;
+
+// Sent to the booker as soon as their booking is queued for approval.
+// Surfaces who the first approver is so they can chase if needed. NOT
+// sent on auto-approve (the bookingConfirmed email already covers that
+// path).
+async function _sendBookingSubmittedEmail(bookingId) {
+  const rows = await query(
+    'SELECT b.id, b.user_id, b.title, b.start_at, b.end_at, b.attendee_count, ' +
+    '       f.name AS facility_name, f.type AS facility_type, ' +
+    '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname ' +
+    '  FROM `bookings`   b ' +
+    '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    '  INNER JOIN `users`      u ON u.id = b.user_id ' +
+    ' WHERE b.id = ? LIMIT 1',
+    [bookingId]
+  );
+  if (rows.length === 0 || !rows[0].booker_email) return;
+  const b = rows[0];
+
+  // Look up step 1's approver (if any) for the "your booking is with X" line.
+  const chainRows = await query(
+    'SELECT COUNT(*) AS total ' +
+    '  FROM `booking_approvals` ' +
+    " WHERE booking_id = ? AND stage = 'checkin'",
+    [bookingId]
+  );
+  const totalSteps = Number(chainRows[0]?.total || 0);
+  let firstApproverName = null;
+  if (totalSteps > 0) {
+    const firstRows = await query(
+      'SELECT u.name, u.lname ' +
+      '  FROM `booking_approvals` ba ' +
+      '  LEFT JOIN `users` u ON u.id = ba.approver_user_id ' +
+      " WHERE ba.booking_id = ? AND ba.stage = 'checkin' " +
+      ' ORDER BY ba.step_order ASC, ba.id ASC LIMIT 1',
+      [bookingId]
+    );
+    if (firstRows[0]) {
+      firstApproverName = [firstRows[0].name, firstRows[0].lname].filter(Boolean).join(' ') || null;
+    }
+  }
+
+  const startStr = typeof b.start_at === 'string' ? b.start_at : new Date(b.start_at).toISOString().replace('T', ' ').slice(0, 19);
+  const endStr   = typeof b.end_at   === 'string' ? b.end_at   : new Date(b.end_at  ).toISOString().replace('T', ' ').slice(0, 19);
+
+  mailer.bookingSubmitted({
+    to: b.booker_email,
+    bookerName: [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null,
+    facilityName: b.facility_name,
+    facilityType: b.facility_type,
+    startAt: startStr,
+    endAt:   endStr,
+    attendeeCount: b.attendee_count,
+    title: b.title,
+    totalSteps,
+    firstApproverName,
+  });
+}
+exports._sendBookingSubmittedEmail = _sendBookingSubmittedEmail;
+
+// Sent to the booker every time an approver acts. Covers both intermediate
+// step decisions and the final-rejected case. Final-approved is handled
+// separately by _sendBookingConfirmedEmail (which carries the reschedule +
+// cancel action tokens that the step-decision email doesn't).
+//
+// Args:
+//   approvalId   - the booking_approvals row that was just decided
+//   finalStatus  - 'approved' | 'rejected' | null  (null = chain still in progress)
+async function _sendBookingStepDecisionEmail({ approvalId, finalStatus }) {
+  const rows = await query(
+    'SELECT ba.id, ba.booking_id, ba.step_order, ba.decision, ba.remark, ' +
+    '       b.user_id, b.title, b.start_at, b.end_at, ' +
+    '       f.name AS facility_name, f.type AS facility_type, ' +
+    '       bk.email AS booker_email, bk.name AS booker_name, bk.lname AS booker_lname, ' +
+    '       du.name AS decider_name, du.lname AS decider_lname ' +
+    '  FROM `booking_approvals` ba ' +
+    '  INNER JOIN `bookings`   b  ON b.id  = ba.booking_id ' +
+    '  INNER JOIN `facilities` f  ON f.id  = b.facility_id ' +
+    '  INNER JOIN `users`      bk ON bk.id = b.user_id ' +
+    '  LEFT  JOIN `users`      du ON du.id = ba.approver_user_id ' +
+    ' WHERE ba.id = ? LIMIT 1',
+    [approvalId]
+  );
+  if (rows.length === 0 || !rows[0].booker_email) return;
+  const row = rows[0];
+
+  // Count of steps at the same stage (checkin) for the "step X of Y" copy.
+  const totalRow = await query(
+    "SELECT COUNT(*) AS cnt FROM `booking_approvals` WHERE booking_id = ? AND stage = 'checkin'",
+    [row.booking_id]
+  );
+  const totalSteps = Number(totalRow[0]?.cnt || 0);
+
+  // Next-up approver (only matters when finalStatus is null AKA still pending).
+  let nextApproverName = null;
+  if (!finalStatus) {
+    const nextRows = await query(
+      'SELECT u.name, u.lname ' +
+      '  FROM `booking_approvals` ba ' +
+      '  LEFT JOIN `users` u ON u.id = ba.approver_user_id ' +
+      " WHERE ba.booking_id = ? AND ba.stage = 'checkin' " +
+      "   AND ba.decision = 'pending' AND ba.step_order > ? " +
+      ' ORDER BY ba.step_order ASC, ba.id ASC LIMIT 1',
+      [row.booking_id, row.step_order]
+    );
+    if (nextRows[0]) {
+      nextApproverName = [nextRows[0].name, nextRows[0].lname].filter(Boolean).join(' ') || null;
+    }
+  }
+
+  const startStr = typeof row.start_at === 'string' ? row.start_at : new Date(row.start_at).toISOString().replace('T', ' ').slice(0, 19);
+  const endStr   = typeof row.end_at   === 'string' ? row.end_at   : new Date(row.end_at  ).toISOString().replace('T', ' ').slice(0, 19);
+
+  mailer.bookingStepDecision({
+    to: row.booker_email,
+    bookerName: [row.booker_name, row.booker_lname].filter(Boolean).join(' ') || null,
+    facilityName: row.facility_name,
+    facilityType: row.facility_type,
+    startAt: startStr,
+    endAt:   endStr,
+    stepOrder: row.step_order,
+    totalSteps,
+    decision: row.decision,
+    decidedBy: [row.decider_name, row.decider_lname].filter(Boolean).join(' ') || null,
+    remark: row.remark,
+    finalStatus,
+    nextApproverName,
+  });
+}
+exports._sendBookingStepDecisionEmail = _sendBookingStepDecisionEmail;
+
+// F09 notification stage - fire-and-forget emails to every recipient
+// configured under stage='notification' for this facility. Called from
+// bookings.create (after approve / auto-approve) and bookings.cancel.
+async function _sendFacilityNotifications(bookingId, event) {
+  try {
+    const rows = await query(
+      'SELECT b.id, b.user_id, b.tenant_id, b.facility_id, b.department_id, ' +
+      '       b.title, b.start_at, b.end_at, b.attendee_count, ' +
+      '       f.id AS f_id, f.tenant_id AS f_tenant_id, f.name AS facility_name, f.type AS facility_type, ' +
+      '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname, u.department_id AS booker_dept ' +
+      '  FROM `bookings` b ' +
+      '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+      '  INNER JOIN `users`      u ON u.id = b.user_id ' +
+      ' WHERE b.id = ? LIMIT 1',
+      [bookingId]
+    );
+    if (rows.length === 0) return;
+    const b = rows[0];
+    const facility = { id: b.f_id, tenant_id: b.f_tenant_id };
+    const booker   = { id: b.user_id, tenant_id: b.f_tenant_id, department_id: b.booker_dept };
+
+    // resolveRecipients uses an in-pool connection-style runner. The helper
+    // expects an object with .execute returning [rows]; mysql2's pool has
+    // execute() but the wrapper would need a real connection. Use the
+    // global pool's execute by lifting a small adapter.
+    const pool = require('../../db/pool').pool;
+    const conn = await pool.getConnection();
+    let recipients = [];
+    try {
+      recipients = await resolveRecipients({ conn, facility, booker, stage: 'notification' });
+    } finally { conn.release(); }
+    if (recipients.length === 0) return;
+
+    const bookerName = [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null;
+    const startAt = typeof b.start_at === 'string' ? b.start_at : new Date(b.start_at).toISOString().replace('T',' ').slice(0,19);
+    const endAt   = typeof b.end_at   === 'string' ? b.end_at   : new Date(b.end_at  ).toISOString().replace('T',' ').slice(0,19);
+
+    for (const r of recipients) {
+      mailer.bookingNotification({
+        to: r.email,
+        recipientName: [r.name, r.lname].filter(Boolean).join(' ') || null,
+        event,                 // 'approved' | 'cancelled'
+        bookerName,
+        facilityName: b.facility_name,
+        facilityType: b.facility_type,
+        startAt, endAt,
+        attendeeCount: b.attendee_count,
+        title: b.title,
+      });
+    }
+  } catch (e) {
+    console.error('[bookings.notify] failed:', e && e.message);
+  }
+}
+exports._sendFacilityNotifications = _sendFacilityNotifications;
 
 // GET /api/bookings/:id/act
 // Consumes one of the booking_action_tokens. Login REQUIRED (the router
@@ -740,6 +1237,8 @@ exports.actByToken = asyncHandler(async function (req, res) {
       );
     });
     await bookingActionTokens.markUsed(tokenRow.id);
+    // F09 - notify facility recipients of the cancel.
+    _sendFacilityNotifications(id, 'cancelled');
     return ok(res, { id, action: 'cancel' }, 'Booking cancelled');
   }
 
@@ -774,7 +1273,6 @@ exports.reschedule = asyncHandler(async function (req, res) {
     return fail(res, 'This link belongs to a different account. Please sign in as the booker.', 403);
   }
 
-  // Load booking + facility for capacity check
   const brows = await query(
     'SELECT b.id, b.tenant_id, b.facility_id, b.user_id, b.attendee_count, b.status, ' +
     '       f.shared_booking, f.capacity ' +
@@ -798,15 +1296,24 @@ exports.reschedule = asyncHandler(async function (req, res) {
     return fail(res, 'New start time must be in the future', 422);
   }
 
-  // Capacity / overlap check in the same transaction.
+  // Re-check advance-booking rules on the NEW start_at. User confirmed
+  // "yes re check via mail". Exclude the booking being moved so the per-user
+  // counts don't double-count itself.
+  const facilityFull = await loadFacility(booking.facility_id);
+  if (facilityFull) {
+    const advCheck = await checkAdvanceRules(
+      facilityFull, startAt, req.user.id, req.user.role,
+      { excludeBookingId: id }
+    );
+    if (!advCheck.ok) return fail(res, advCheck.msg, advCheck.status);
+  }
+
   try {
     await withTransaction(async function (conn) {
-      // Move the booking first.
       await conn.execute(
         'UPDATE `bookings` SET start_at = ?, end_at = ? WHERE id = ?',
         [startAt, endAt, id]
       );
-      // Now SUM overlaps (excluding self) with FOR SHARE.
       const [overlapRows] = await conn.execute(
         "SELECT COALESCE(SUM(attendee_count), 0) AS total " +
         "  FROM `bookings` " +
@@ -815,10 +1322,14 @@ exports.reschedule = asyncHandler(async function (req, res) {
         [booking.facility_id, id, endAt, startAt]
       );
       const total = Number(overlapRows[0].total) + Number(booking.attendee_count);
+      const effResched = await slotOverrides.effectiveCapacity(booking.facility_id, startAt, endAt);
+      const reschedCap = Math.max(0, Number(
+        effResched.matched ? effResched.max : booking.capacity
+      ) || 0);
       if (booking.shared_booking === 1) {
-        if (total > Number(booking.capacity)) {
+        if (total > reschedCap) {
           const err = new Error('CAPACITY_EXCEEDED');
-          err._capacity = booking.capacity;
+          err._capacity = reschedCap;
           err._totalInWindow = total;
           throw err;
         }
@@ -840,42 +1351,34 @@ exports.reschedule = asyncHandler(async function (req, res) {
   console.log(`[bookings.reschedule] booking #${id} moved to ${startAt} - ${endAt}`);
   return ok(res, { id, start_at: startAt, end_at: endAt }, 'Booking rescheduled');
 });
-//  (e && e.message === 'CAPACITY_EXCEEDED') {
-//       return fail(res, `Only ${e._capacity - (e._totalInWindow - Number(booking.attendee_count))} seat(s) free in that slot.`, 409);
-//     }
-//     if (e && e.message === 'SLOT_TAKEN') {
-//       return fail(res, 'That slot is already taken. Pick another time.', 409);
-//     }
-//     throw e;
+// user.tenant_id) {
+//     return fail(res, 'Forbidden', 403);
+//   }
+//   if (!['pending', 'approved'].includes(booking.status)) {
+//     return fail(res, `Cannot reschedule a ${booking.status} booking`, 422);
+//   }
+//   if (new Date(startAt) >= new Date(endAt)) {
+//     return fail(res, 'End must be after start', 422);
+//   }
+//   if (new Date(startAt) < new Date()) {
+//     return fail(res, 'New start time must be in the future', 422);
 //   }
 
-//   await bookingActionTokens.markUsed(tokenRow.id);
-//   console.log(`[bookings.reschedule] booking #${id} moved to ${startAt} - ${endAt}`);
-//   return ok(res, { id, start_at: startAt, end_at: endAt }, 'Booking rescheduled');
-// });
-//     err._capacity = booking.capacity;
-//           err._totalInWindow = total;
-//           throw err;
-//         }
-//       } else if (Number(overlapRows[0].total) > 0) {
-//         throw new Error('SLOT_TAKEN');
-//       }
-//     });
-//   } catch (e) {
-//     if (e && e.message === 'CAPACITY_EXCEEDED') {
-//       return fail(res, `Only ${e._capacity - (e._totalInWindow - Number(booking.attendee_count))} seat(s) free in that slot.`, 409);
-//     }
-//     if (e && e.message === 'SLOT_TAKEN') {
-//       return fail(res, 'That slot is already taken. Pick another time.', 409);
-//     }
-//     throw e;
+//   // Re-check advance-booking rules on the NEW start_at. User confirmed
+//   // "yes re check via mail". Exclude the booking being moved so the per-user
+//   // counts don't double-count itself.
+//   const facilityFull = await loadFacility(booking.facility_id);
+//   if (facilityFull) {
+//     const advCheck = await checkAdvanceRules(
+//       facilityFull, startAt, req.user.id, req.user.role,
+//       { excludeBookingId: id }
+//     );
+//     if (!advCheck.ok) return fail(res, advCheck.msg, advCheck.status);
 //   }
 
-//   await bookingActionTokens.markUsed(tokenRow.id);
-//   console.log(`[bookings.reschedule] booking #${id} moved to ${startAt} - ${endAt}`);
-//   return ok(res, { id, start_at: startAt, end_at: endAt }, 'Booking rescheduled');
-// });
-// n.execute(
+//   try {
+//     await withTransaction(async function (conn) {
+//       await conn.execute(
 //         'UPDATE `bookings` SET start_at = ?, end_at = ? WHERE id = ?',
 //         [startAt, endAt, id]
 //       );
@@ -887,10 +1390,14 @@ exports.reschedule = asyncHandler(async function (req, res) {
 //         [booking.facility_id, id, endAt, startAt]
 //       );
 //       const total = Number(overlapRows[0].total) + Number(booking.attendee_count);
+//       const effResched = await slotOverrides.effectiveCapacity(booking.facility_id, startAt, endAt);
+//       const reschedCap = Math.max(0, Number(
+//         effResched.matched ? effResched.max : booking.capacity
+//       ) || 0);
 //       if (booking.shared_booking === 1) {
-//         if (total > Number(booking.capacity)) {
+//         if (total > reschedCap) {
 //           const err = new Error('CAPACITY_EXCEEDED');
-//           err._capacity = booking.capacity;
+//           err._capacity = reschedCap;
 //           err._totalInWindow = total;
 //           throw err;
 //         }
@@ -912,5 +1419,77 @@ exports.reschedule = asyncHandler(async function (req, res) {
 //   console.log(`[bookings.reschedule] booking #${id} moved to ${startAt} - ${endAt}`);
 //   return ok(res, { id, start_at: startAt, end_at: endAt }, 'Booking rescheduled');
 // });
-// _at: startAt, end_at: endAt }, 'Booking rescheduled');
-// });
+//     'SELECT b.id, b.tenant_id, b.facility_id, b.user_id, b.attendee_count, b.status, ' +
+//     '       f.shared_booking, f.capacity ' +
+//     '  FROM `bookings` b ' +
+//     '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+//     ' WHERE b.id = ? AND b.trash = 0 LIMIT 1',
+//     [id]
+//   );
+//   if (brows.length === 0) return notFound(res, 'Booking not found');
+//   const booking = brows[0];
+//   if (req.user.role !== 'super_admin' && booking.tenant_id !== req.user.tenant_id) {
+//     return fail(res, 'Forbidden', 403);
+//   }
+//   if (!['pending', 'approved'].includes(booking.status)) {
+//     return fail(res, `Cannot reschedule a ${booking.status} booking`, 422);
+//   }
+//   if (new Date(startAt) >= new Date(endAt)) {
+//     return fail(res, 'End must be after start', 422);
+//   }
+//   if (new Date(startAt) < new Date()) {
+//     return fail(res, 'New start time must be in the future', 422);
+//   }
+
+//   // Re-check advance-booking rules on the NEW start_at (excl. self).
+//   const facilityFull = await loadFacility(booking.facility_id);
+//   if (facilityFull) {
+//     const advCheck = await checkAdvanceRules(
+//       facilityFull, startAt, req.user.id, req.user.role,
+//       { excludeBookingId: id }
+//     );
+//     if (!advCheck.ok) return fail(res, advCheck.msg, advCheck.status);
+//   }
+
+//   try {
+//     await withTransaction(async function (conn) {
+//       await conn.execute(
+//         'UPDATE `bookings` SET start_at = ?, end_at = ? WHERE id = ?',
+//         [startAt, endAt, id]
+//       );
+//       const [overlapRows] = await conn.execute(
+//         "SELECT COALESCE(SUM(attendee_count), 0) AS total " +
+//         "  FROM `bookings` " +
+//         " WHERE facility_id = ? AND id <> ? AND status IN ('pending','approved','completed') " +
+//         "   AND start_at < ? AND end_at > ? FOR SHARE",
+//         [booking.facility_id, id, endAt, startAt]
+//       );
+//       const total = Number(overlapRows[0].total) + Number(booking.attendee_count);
+//       const effResched = await slotOverrides.effectiveCapacity(booking.facility_id, startAt, endAt);
+//       const reschedCap = Math.max(0, Number(
+//         effResched.matched ? effResched.max : booking.capacity
+//       ) || 0);
+//       if (booking.shared_booking === 1) {
+//         if (total > reschedCap) {
+//           const err = new Error('CAPACITY_EXCEEDED');
+//           err._capacity = reschedCap;
+//           err._totalInWindow = total;
+//           throw err;
+//         }
+//       } else if (Number(overlapRows[0].total) > 0) {
+//         throw new Error('SLOT_TAKEN');
+//       }
+//     });
+//   } catch (e) {
+//     if (e && e.message === 'CAPACITY_EXCEEDED') {
+//       return fail(res, `Only ${e._capacity - (e._totalInWindow - Number(booking.attendee_count))} seat(s) free in that slot.`, 409);
+//     }
+//     if (e && e.message === 'SLOT_TAKEN') {
+//       return fail(res, 'That slot is already taken. Pick another time.', 409);
+//     }
+//     throw e;
+//   }
+
+//   await bookingActionTokens.markUsed(tokenRow.id);
+//   console.log(`[bookings.reschedule] booking #${id} moved to ${startAt} - ${endAt}`);
+//   return ok(res, { id, start_at: startAt, end_at: endAt }, 'Booking rescheduled');

@@ -10,6 +10,9 @@ router.use(authRequired);
 router.get('/',          ctrl.list);
 router.get('/:id',       ctrl.getOne);
 router.get('/:id/hours', ctrl.listHours);
+// F09 - chair delete guard: counts active future bookings that hold a
+// given chair id so the admin editor can warn before deleting it.
+router.get('/:id/chair-bookings', requireRole('super_admin', 'tenant_admin'), ctrl.chairBookings);
 
 // Writes - admins only.
 router.post('/',         requireRole('super_admin', 'tenant_admin'), ctrl.create);

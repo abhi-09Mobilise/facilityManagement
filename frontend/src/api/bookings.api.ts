@@ -22,6 +22,10 @@ export interface BookingCheckResult {
   capacity: number;
   seats_taken: number;
   seats_remaining: number;
+  // F09 - chair ids already claimed in this exact window (across all
+  // pending/approved/completed bookings for the facility). Empty for
+  // facilities without a desk layout.
+  occupied_desks?: string[];
 }
 
 // F07 - response from GET /bookings/:id/act

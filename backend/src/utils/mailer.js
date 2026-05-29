@@ -266,6 +266,86 @@ function bookingConfirmed(opts) {
   trigger('bookingConfirmed', to, subject, html);
 }
 
+// Facility notification - sent to admin-configured recipients on
+// booking-approved or booking-cancelled events. Doesn't carry any action
+// tokens; it's purely informational ("FYI someone booked the boardroom").
+function bookingNotification(opts) {
+  const {
+    to, recipientName, event, bookerName, facilityName, facilityType,
+    startAt, endAt, attendeeCount, title,
+  } = opts || {};
+  if (!to) return;
+  const eventLabel = event === 'cancelled' ? 'Cancelled' : 'Confirmed';
+  const heading    = event === 'cancelled'
+    ? 'A booking has been cancelled'
+    : 'A booking has been confirmed';
+  const subject = `[${eventLabel}] ${facilityName || 'Facility'} - ${startAt}`;
+  const html = `
+    <p>Hi ${recipientName || 'there'},</p>
+    <p>${heading} on a facility you're set to be notified about:</p>
+    <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;line-height:1.5">
+      <tr><td style="padding:2px 8px;color:#64748b">Facility</td><td><b>${facilityName || ''}</b>${facilityType ? ' <span style="color:#64748b">(' + facilityType + ')</span>' : ''}</td></tr>
+      ${title ? `<tr><td style="padding:2px 8px;color:#64748b">Title</td><td>${title}</td></tr>` : ''}
+      <tr><td style="padding:2px 8px;color:#64748b">When</td><td>${startAt} &nbsp;&rarr;&nbsp; ${endAt}</td></tr>
+      ${bookerName ? `<tr><td style="padding:2px 8px;color:#64748b">Booker</td><td>${bookerName}</td></tr>` : ''}
+      ${attendeeCount ? `<tr><td style="padding:2px 8px;color:#64748b">Attendees</td><td>${attendeeCount}</td></tr>` : ''}
+    </table>
+    <p style="color:#64748b;font-size:12px">You're receiving this because an admin added you to the facility notification list.</p>
+  `;
+  trigger('bookingNotification', to, subject, html);
+}
+
+// Sent to the booker right after a booking lands in the approval queue.
+// Lets them see the request was accepted and who they're waiting on.
+function bookingSubmitted(opts) {
+  const {
+    to, bookerName, facilityName, facilityType, startAt, endAt,
+    attendeeCount, title, totalSteps, firstApproverName,
+  } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingSubmitted({
+    bookerName, facilityName, facilityType, startAt, endAt,
+    attendeeCount, title, totalSteps, firstApproverName,
+  });
+  trigger('bookingSubmitted', to, subject, html);
+}
+
+// Sent to the booker each time an approver acts. For intermediate steps
+// it surfaces the decision + who's next. For the final-rejected case it
+// flips to the rejection wording. (Final-approved still goes through the
+// bookingConfirmed helper because that one carries the reschedule + cancel
+// action tokens.)
+function bookingStepDecision(opts) {
+  const {
+    to, bookerName, facilityName, facilityType, startAt, endAt,
+    stepOrder, totalSteps, decision, decidedBy, remark,
+    finalStatus, nextApproverName,
+  } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingStepDecision({
+    bookerName, facilityName, facilityType, startAt, endAt,
+    stepOrder, totalSteps, decision, decidedBy, remark,
+    finalStatus, nextApproverName,
+  });
+  trigger('bookingStepDecision', to, subject, html);
+}
+
+// Pre-end cleanup notification. Fired by the cron to the facility's
+// cleanup chain recipients N minutes before end_at. No action links — it's
+// a heads-up email so the cleaner / maintenance team can plan turnover.
+function bookingEndingSoon(opts) {
+  const {
+    to, recipientName, leadMinutes, facilityName, facilityType,
+    startAt, endAt, bookerName, attendeeCount, title,
+  } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingEndingSoon({
+    recipientName, leadMinutes, facilityName, facilityType,
+    startAt, endAt, bookerName, attendeeCount, title,
+  });
+  trigger('bookingEndingSoon', to, subject, html);
+}
+
 module.exports = {
   sendMail,
   fireAndForget,
@@ -278,4 +358,8 @@ module.exports = {
   passwordResetRequested,
   approvalRequested,
   bookingConfirmed,
+  bookingNotification,
+  bookingSubmitted,
+  bookingStepDecision,
+  bookingEndingSoon,
 };

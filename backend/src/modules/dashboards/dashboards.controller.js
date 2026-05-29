@@ -7,8 +7,8 @@
 //                        today_open_minutes, today_booked_minutes }]
 //
 // Tenant-scoping:
-//   - super_admin can pass ?tenant_id=N. If omitted, returns empty payload
-//     (there's no useful cross-tenant aggregate for this dashboard).
+//   - super_admin can pass ?tenant_id=N to narrow to one tenant. If omitted,
+//     the payload aggregates across EVERY tenant (cross-tenant totals).
 //   - everyone else is locked to their own tenant_id.
 
 const { query } = require('../../db/pool');
@@ -25,14 +25,23 @@ function emptyPayload() {
 }
 
 exports.tenantAdmin = asyncHandler(async function (req, res) {
-  let tenantId;
+  // Build a tenant filter that's empty when a super_admin asks for the
+  // global aggregate (no ?tenant_id=). Everyone else stays pinned to
+  // their own tenant.
+  let tenantClause = '';
+  const tenantParams = [];
   if (req.user.role === 'super_admin') {
-    tenantId = intOrNull(req.query.tenant_id);
-    if (tenantId === null) return ok(res, emptyPayload());
+    const tid = intOrNull(req.query.tenant_id);
+    if (tid !== null) {
+      tenantClause = ' AND f.tenant_id = ? ';
+      tenantParams.push(tid);
+    }
+    // tid===null -> NO clause: aggregates across every tenant.
   } else {
-    tenantId = req.user.tenant_id;
+    if (!req.user.tenant_id) return ok(res, emptyPayload());
+    tenantClause = ' AND f.tenant_id = ? ';
+    tenantParams.push(req.user.tenant_id);
   }
-  if (!tenantId) return ok(res, emptyPayload());
 
   // -- per-facility today_open_minutes from operating hours --
   // MySQL's DAYOFWEEK returns 1..7 (Sun=1); our schema uses 0..6 (Sun=0).
@@ -42,10 +51,10 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     '  FROM `facilities` f ' +
     '  LEFT JOIN `facility_operating_hours` oh ' +
     '    ON oh.facility_id = f.id AND oh.day_of_week = DAYOFWEEK(CURDATE()) - 1 ' +
-    ' WHERE f.tenant_id = ? AND f.trash = 0 AND f.status = 1 ' +
+    ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
     ' GROUP BY f.id, f.name, f.type, f.capacity ' +
     ' ORDER BY f.name',
-    [tenantId]
+    tenantParams
   );
 
   if (openRows.length === 0) return ok(res, emptyPayload());
@@ -67,9 +76,9 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     "        AND b.status IN ('approved', 'pending', 'completed') " +
     "        AND b.start_at < CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' 00:00:00') " +
     "        AND b.end_at   > CONCAT(CURDATE(), ' 00:00:00') " +
-    ' WHERE f.tenant_id = ? AND f.trash = 0 AND f.status = 1 ' +
+    ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
     ' GROUP BY f.id',
-    [tenantId]
+    tenantParams
   );
 
   // -- which facilities are occupied right now? --
@@ -77,11 +86,11 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     'SELECT DISTINCT f.id ' +
     '  FROM `facilities` f ' +
     '  INNER JOIN `bookings` b ON b.facility_id = f.id ' +
-    "  WHERE f.tenant_id = ? AND f.trash = 0 AND f.status = 1 " +
+    '  WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
     "    AND b.trash = 0 " +
     "    AND b.status IN ('approved', 'pending', 'completed') " +
     "    AND b.start_at <= NOW() AND b.end_at > NOW()",
-    [tenantId]
+    tenantParams
   );
 
   const bookedByFacility = new Map();
@@ -128,10 +137,22 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
 // year. Tenant scoping mirrors the rest of /dashboards endpoints.
 
 exports.gantt = asyncHandler(async function (req, res) {
-  const tenantId = req.user.role === 'super_admin'
-    ? (parseInt(req.query.tenant_id, 10) || null)
-    : req.user.tenant_id;
-  if (!tenantId) return fail(res, 'tenant_id is required for super_admin', 422);
+  // F08 - super_admin can either pick a tenant via ?tenant_id= or pull the
+  // global cross-tenant view when no tenant_id is passed. Everyone else
+  // is pinned to their own tenant.
+  let tenantClause = '';
+  const tenantParams = [];
+  if (req.user.role === 'super_admin') {
+    const tid = parseInt(req.query.tenant_id, 10);
+    if (tid > 0) {
+      tenantClause = ' AND f.tenant_id = ? ';
+      tenantParams.push(tid);
+    }
+  } else {
+    if (!req.user.tenant_id) return ok(res, { facilities: [], items: [] });
+    tenantClause = ' AND f.tenant_id = ? ';
+    tenantParams.push(req.user.tenant_id);
+  }
 
   const siteId = req.query.site_id ? parseInt(req.query.site_id, 10) : null;
   const now = new Date();
@@ -149,14 +170,20 @@ exports.gantt = asyncHandler(async function (req, res) {
   const fromMysql = fromStr + ' 00:00:00';
   const toMysql   = toStr   + ' 23:59:59';
 
-  const facWhere = ['f.tenant_id = ?', 'f.trash = 0', 'f.status = 1'];
-  const facParams = [tenantId];
-  if (siteId) { facWhere.push('f.site_id = ?'); facParams.push(siteId); }
+  // Build the facilities WHERE: tenantClause is already 'AND f.tenant_id...'
+  // (or empty for cross-tenant super_admin view); site filter is optional.
+  const facExtra = [];
+  const facExtraParams = [];
+  if (siteId) { facExtra.push(' AND f.site_id = ? '); facExtraParams.push(siteId); }
 
+  // Cross-tenant view labels each facility with its tenant for readability.
   const facilities = await query(
-    'SELECT f.id, f.name, f.type FROM `facilities` f WHERE ' + facWhere.join(' AND ') +
-    ' ORDER BY f.name',
-    facParams
+    'SELECT f.id, f.name, f.type, f.tenant_id, t.name AS tenant_name ' +
+    '  FROM `facilities` f ' +
+    '  LEFT JOIN `tenants` t ON t.id = f.tenant_id ' +
+    ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause + facExtra.join('') +
+    ' ORDER BY ' + (tenantClause ? 'f.name' : 't.name, f.name'),
+    [...tenantParams, ...facExtraParams]
   );
   if (facilities.length === 0) return ok(res, { facilities: [], items: [] });
 
@@ -164,14 +191,14 @@ exports.gantt = asyncHandler(async function (req, res) {
   const placeholders = facIds.map(() => '?').join(',');
   const items = await query(
     'SELECT b.id, b.facility_id, b.title, b.start_at, b.end_at, b.status, ' +
-    '       u.name AS booker_name, u.lname AS booker_lname ' +
+    '       u.name AS booker_name, u.lname AS booker_lname, u.username AS booker_username ' +
     '  FROM `bookings` b ' +
     '  LEFT JOIN `users` u ON u.id = b.user_id ' +
-    " WHERE b.tenant_id = ? AND b.facility_id IN (" + placeholders + ") AND b.trash = 0 " +
+    ' WHERE b.facility_id IN (' + placeholders + ') AND b.trash = 0 ' +
     "   AND b.status IN ('pending','approved','completed') " +
     '   AND b.start_at < ? AND b.end_at > ? ' +
     ' ORDER BY b.facility_id, b.start_at',
-    [tenantId, ...facIds, toMysql, fromMysql]
+    [...facIds, toMysql, fromMysql]
   );
 
   return ok(res, {
@@ -180,11 +207,10 @@ exports.gantt = asyncHandler(async function (req, res) {
       id: i.id,
       facility_id: i.facility_id,
       title: i.title || null,
-      start_at: typeof i.start_at === 'string' ? i.start_at : new Date(i.start_at).toISOString().slice(0, 19).replace('T',' '),
-      end_at:   typeof i.end_at   === 'string' ? i.end_at   : new Date(i.end_at  ).toISOString().slice(0, 19).replace('T',' '),
+      start_at: typeof i.start_at === 'string' ? i.start_at : new Date(i.start_at).toISOString().replace('T', ' ').slice(0, 19),
+      end_at:   typeof i.end_at   === 'string' ? i.end_at   : new Date(i.end_at  ).toISOString().replace('T', ' ').slice(0, 19),
       status: i.status,
-      booker_name: [i.booker_name, i.booker_lname].filter(Boolean).join(' ') || null,
+      booker_name: [i.booker_name, i.booker_lname].filter(Boolean).join(' ') || i.booker_username || null,
     })),
-    window: { from: fromStr, to: toStr },
   });
 });

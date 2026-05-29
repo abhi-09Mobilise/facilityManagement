@@ -81,11 +81,86 @@ export interface Floor {
   site_name?: string;
   name: string;
   level_number?: number;
+  // F09 - optional floor plan image (base64 data URL or path). When set,
+  // the facility layout editor uses it as the canvas background by
+  // default for every facility on this floor.
+  layout_image_url?: string | null;
   status: 0 | 1;
 }
 
 export type FacilityType =
   | 'meeting_room' | 'gym' | 'conference_room' | 'desk' | 'swimming_pool' | 'other';
+
+// F09 - Desk layout (v2)
+//
+// The editor stores objects in pixel coordinates relative to a canvas of
+// (widthM * pxPerMeter) × (heightM * pxPerMeter). Only objects with
+// type === 'desk' (or 'meeting_room') count toward booking capacity;
+// chair / wall / table / door / plant are decorative.
+//
+// Mode 'image' overlays the desks on a user-uploaded floor plan
+// (stored inline as a data: URL or as a path served from /uploads).
+// Mode 'blank' draws a faint grid background and lets the admin assemble
+// the room from the furniture palette.
+
+export type LayoutObjectType =
+  | 'desk' | 'meeting_room'
+  | 'chair' | 'table_round' | 'table_rect'
+  | 'wall'  | 'door' | 'plant';
+
+export interface LayoutObject {
+  id: string;                  // "C-01" for chairs, "obj-NN" for furniture
+  type: LayoutObjectType;
+  x: number;                   // px from top-left of canvas
+  y: number;
+  w?: number;                  // px (defaults per type)
+  h?: number;
+  rot?: number;                // degrees, 0..359
+  label?: string;              // visible text on chairs/desks
+  // When true, this object is one of the four auto-generated edge walls.
+  // We reposition perimeter walls whenever widthM/heightM changes, but the
+  // admin can still drag and resize them to carve out openings or extend them.
+  perimeter?: boolean;
+  // For perimeter walls — which side of the room they hug. Used to keep them
+  // anchored to that edge while the user resizes thickness/length.
+  side?: 'top' | 'bottom' | 'left' | 'right';
+  // F09 - VIP-reserved chair. Hidden entirely from the booker (DeskPicker
+  // skips rendering / counting it) so it can never be claimed. Admin still
+  // sees it on the floor-plan editor with a gold accent so they can edit
+  // or unmark it. The backend also defends against direct POSTs by id.
+  isVip?: boolean;
+  // Tagged true on objects added by the OpenCV auto-detect pass. Lets the
+  // editor implement "Undo last scan" without affecting manually-placed
+  // objects. Cleared when the admin commits the layout to the backend.
+  _fromScan?: boolean;
+}
+
+export interface FacilityLayout {
+  version: 2;
+  mode: 'blank' | 'image';
+  imageUrl?: string | null;    // data URL or path; only for mode='image'
+  widthM: number;              // floor area width in metres
+  heightM: number;             // floor area height in metres
+  pxPerMeter: number;          // render scale (e.g. 60 = 60 px per metre)
+  snapPx: number;              // grid snap step in pixels (0 = no snap)
+  objects: LayoutObject[];
+}
+
+// Legacy v1 type kept so older saved layouts still type-check while we
+// migrate them in the loader.
+export interface FacilityLayoutV1 {
+  version: 1;
+  rows: number;
+  cols: number;
+  cellSize: number;
+  desks: Array<{
+    id: string;
+    label: string;
+    type: 'desk' | 'meeting_room';
+    x: number;
+    y: number;
+  }>;
+}
 
 export interface Facility {
   id: number;
@@ -96,8 +171,24 @@ export interface Facility {
   name: string;
   type: FacilityType;
   capacity: number;
+  // F09 - of those `capacity` seats, how many are held back from the
+  // booking system (VIPs, walk-ins, maintenance). The bookable seat
+  // count is therefore (capacity - offline_capacity).
+  offline_capacity?: number;
+  // Advance-booking rules. All optional; null/undefined = no rule.
+  // Bypassed for super_admin + tenant_admin on the backend.
+  min_advance_minutes?: number | null;
+  max_advance_days?: number | null;
+  max_per_user_per_day?: number | null;
+  max_per_user_per_week?: number | null;
+  max_per_user_per_month?: number | null;
+  // Minutes BEFORE end_at to fire a cleanup-notification email to the
+  // facility's 'cleanup' chain. NULL/0 disables the feature.
+  pre_end_notify_minutes?: number | null;
   description?: string;
   image_url?: string;
+  // F09 - desk layout JSON. Backend stores as TEXT; we round-trip the parsed object.
+  layout_json?: string | FacilityLayout | null;
   requires_approval: 0 | 1;
   // When 1, multiple bookings can co-exist for any overlapping window as
   // long as total attendees stay <= capacity. Default 0 = exclusive.
@@ -118,7 +209,7 @@ export interface FacilityApprovalChainStep {
   facility_id?: number;
   // F02 - which workflow this step belongs to. Defaults to 'checkin' for
   // backwards compat with existing chains.
-  stage?: 'checkin' | 'checkout';
+  stage?: 'checkin' | 'checkout' | 'notification' | 'cleanup';
   step_order: number;
   approver_kind: 'user' | 'dynamic_dept_manager';
   approver_user_id?: number | null;
@@ -207,6 +298,9 @@ export interface CreateUserPayload {
 }
 
 // Slim shape from GET /api/users/approvers - used by workflow step picker.
+// department_id/department_name are populated when the approver belongs to a
+// department; the chain editor uses them to power the Site -> Dept -> Approver
+// cascade picker.
 export interface ApproverOption {
   id: number;
   username: string;
@@ -215,6 +309,8 @@ export interface ApproverOption {
   email?: string;
   designation?: string;
   role?: Role;
+  department_id?: number | null;
+  department_name?: string | null;
 }
 
 // ----- Bookings (live, from backend) --------------------------------------
@@ -293,6 +389,10 @@ export interface CreateBookingPayload {
   // F06 - pantry orders. Each entry references a pantry_menu_items.id linked
   // to a pantry that's both on this facility's site AND in facility_pantries.
   pantry_orders?: { menu_item_id: number; quantity: number }[];
+  // F09 - specific chair the booker claims out of the facility's desk layout.
+  // String form matches layout_json.objects[].id (e.g. "C-03"). Backend
+  // race-checks the same window for collisions.
+  desk_id?: string;
 }
 
 // Approval inbox row (joined view from GET /approvals/inbox)
@@ -306,7 +406,7 @@ export interface InboxItem {
   approver_user_id: number;
   // F02 - per-row stage. 'checkin' is the pre-booking workflow; 'checkout'
   // is the post-booking sign-off (cleaning, returns, etc).
-  stage?: 'checkin' | 'checkout';
+  stage?: 'checkin' | 'checkout' | 'notification' | 'cleanup';
   decision: 'pending' | 'approved' | 'rejected';
   remark?: string;
   decided_at?: string;
@@ -332,58 +432,6 @@ export type FacilityKind = FacilityType;
 
 export interface FacilityCard {
   kind: FacilityKind;
-  label: string;
   description: string;
-  image: string;
-  disabled?: boolean;
-}
-
-export interface Booking {
-  bookingId: string;
-  title: string;
-  facility: string;
-  bookedBy: string;
-  guests: number;
-  slot: string;
-  status?: 'upcoming' | 'past' | 'cancelled';
-}
-
-export interface Guest {
-  fname: string;
-  lname: string;
-  contactNo: string;
-  email: string;
-}
- facility: string;
-  bookedBy: string;
-  guests: number;
-  slot: string;
-  status?: 'upcoming' | 'past' | 'cancelled';
-}
-
-export interface Guest {
-  fname: string;
-  lname: string;
-  contactNo: string;
-  email: string;
-}
-: string;
-  disabled?: boolean;
-}
-
-export interface Booking {
-  bookingId: string;
-  title: string;
-  facility: string;
-  bookedBy: string;
-  guests: number;
-  slot: string;
-  status?: 'upcoming' | 'past' | 'cancelled';
-}
-
-export interface Guest {
-  fname: string;
-  lname: string;
-  contactNo: string;
-  email: string;
+  image?: string;
 }

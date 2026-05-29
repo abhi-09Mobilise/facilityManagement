@@ -12,7 +12,8 @@ import { sitesApi } from '@/api/sites.api';
 import type { Site } from '@/types';
 
 function newRow(): PantryMenuItem {
-  return { name: '', meal_time_id: null, price: 0, status: 1 };
+  // New items default to FREE - admin opts in to "paid" with the toggle.
+  return { name: '', meal_time_id: null, is_paid: 0, price: 0, status: 1 };
 }
 
 export default function PantryFormPage() {
@@ -132,31 +133,59 @@ export default function PantryFormPage() {
             </Button>
           </div>
           {menu.length === 0 && <div className="text-sm text-muted-foreground">No items yet.</div>}
-          {menu.map((it, idx) => (
-            <div key={idx} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_100px_auto] gap-2 sm:gap-3 items-end mb-2">
-              <div>
-                <Label className="sm:sr-only">Item</Label>
-                <Input value={it.name} onChange={(e) => patchItem(idx, 'name', e.target.value)} placeholder="Sandwich, espresso…" />
+          {menu.map((it, idx) => {
+            const isPaid = it.is_paid === 1;
+            return (
+              <div key={idx} className="grid grid-cols-1 sm:grid-cols-[1fr_140px_120px_100px_auto] gap-2 sm:gap-3 items-end mb-2">
+                <div>
+                  <Label className="sm:sr-only">Item</Label>
+                  <Input value={it.name} onChange={(e) => patchItem(idx, 'name', e.target.value)} placeholder="Sandwich, espresso…" />
+                </div>
+                {/* Paid/Free toggle - flips the price input on. Pinning
+                    price back to 0 when toggling off keeps the data clean. */}
+                <div>
+                  <Label className="sm:sr-only">Paid?</Label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next: 0 | 1 = isPaid ? 0 : 1;
+                      patchItem(idx, 'is_paid', next);
+                      if (next === 0) patchItem(idx, 'price', 0);
+                    }}
+                    className={
+                      'h-9 w-full rounded border text-sm transition-colors ' +
+                      (isPaid
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background border-input text-muted-foreground hover:bg-muted')
+                    }>
+                    {isPaid ? 'Paid' : 'Free'}
+                  </button>
+                </div>
+                <div>
+                  <Label className="sm:sr-only">Price</Label>
+                  <Input
+                    type="number" min={0} step="0.01"
+                    value={isPaid ? it.price : 0}
+                    onChange={(e) => patchItem(idx, 'price', Number(e.target.value || 0))}
+                    disabled={!isPaid}
+                    placeholder={isPaid ? '0.00' : '—'} />
+                </div>
+                <div>
+                  <Label className="sm:sr-only">Status</Label>
+                  <select className="h-9 w-full rounded border border-input bg-background px-2 text-sm"
+                    value={it.status ?? 1}
+                    onChange={(e) => patchItem(idx, 'status', Number(e.target.value) as 0 | 1)}>
+                    <option value={1}>Active</option>
+                    <option value={0}>Inactive</option>
+                  </select>
+                </div>
+                <Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                  onClick={() => setMenu((m) => m.filter((_, i) => i !== idx))}>
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-              <div>
-                <Label className="sm:sr-only">Price</Label>
-                <Input type="number" min={0} step="0.01" value={it.price} onChange={(e) => patchItem(idx, 'price', Number(e.target.value || 0))} />
-              </div>
-              <div>
-                <Label className="sm:sr-only">Status</Label>
-                <select className="h-9 w-full rounded border border-input bg-background px-2 text-sm"
-                  value={it.status ?? 1}
-                  onChange={(e) => patchItem(idx, 'status', Number(e.target.value) as 0 | 1)}>
-                  <option value={1}>Active</option>
-                  <option value={0}>Inactive</option>
-                </select>
-              </div>
-              <Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive"
-                onClick={() => setMenu((m) => m.filter((_, i) => i !== idx))}>
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {error && <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}

@@ -298,3 +298,189 @@ exports.bookingConfirmed = function (opts) {
     html: wrap(body, { title: 'Booking confirmed' }),
   };
 };
+
+// ----- bookingSubmitted ---------------------------------------------------
+// Sent to the booker on POST /api/bookings when the booking enters the
+// approval chain (status='pending'). Tells them their booking is in the
+// queue and surfaces who they're waiting on.
+
+exports.bookingSubmitted = function (opts) {
+  const {
+    bookerName, facilityName, facilityType, startAt, endAt,
+    attendeeCount, title, totalSteps, firstApproverName,
+  } = opts || {};
+
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      '<tr><td style="padding:6px 0;color:#6b7280;width:140px;">Facility</td>' +
+        '<td style="padding:6px 0;"><strong>' + esc(facilityName) + '</strong> ' +
+        '<span style="color:#6b7280;">(' + esc(facilityType) + ')</span></td></tr>' +
+      '<tr><td style="padding:6px 0;color:#6b7280;">From</td>' +
+        '<td style="padding:6px 0;">' + esc(startAt) + '</td></tr>' +
+      '<tr><td style="padding:6px 0;color:#6b7280;">To</td>' +
+        '<td style="padding:6px 0;">' + esc(endAt) + '</td></tr>' +
+      (title ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Title</td>' +
+          '<td style="padding:6px 0;">' + esc(title) + '</td></tr>'
+      ) : '') +
+      (attendeeCount ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Attendees</td>' +
+          '<td style="padding:6px 0;">' + esc(attendeeCount) + '</td></tr>'
+      ) : '') +
+    '</table>';
+
+  const queueLine = totalSteps
+    ? ('<p>Your booking is in the approval queue. ' +
+        (firstApproverName
+          ? 'Step 1 of ' + esc(totalSteps) + ' is with <strong>' + esc(firstApproverName) + '</strong>.'
+          : 'It will be reviewed by ' + esc(totalSteps) + ' approver(s) in order.') +
+       '</p>')
+    : '<p>Your booking has been submitted.</p>';
+
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    '<p>We\'ve received your booking request - it\'s now <strong>pending approval</strong>.</p>' +
+    summary +
+    queueLine +
+    '<p style="color:#6b7280;font-size:13px;margin-top:18px;">' +
+      'You\'ll get another email as soon as each approver acts.' +
+    '</p>';
+
+  return {
+    subject: 'Booking submitted: ' + facilityName + ' on ' + (startAt || '').slice(0, 10),
+    html: wrap(body, { title: 'Booking submitted' }),
+  };
+};
+
+// ----- bookingStepDecision ------------------------------------------------
+// Sent to the booker each time an approver acts on their booking. Covers
+// both intermediate steps ("Step 2 of 3 approved, waiting on step 3") and
+// final reject ("All steps decided - booking rejected"). The final-approve
+// case stays on the existing bookingConfirmed (which carries reschedule /
+// cancel links the booker wants).
+
+exports.bookingStepDecision = function (opts) {
+  const {
+    bookerName, facilityName, facilityType, startAt, endAt,
+    stepOrder, totalSteps, decision, decidedBy, remark,
+    finalStatus,                  // 'approved' | 'rejected' | null
+    nextApproverName,             // who's up next (intermediate steps only)
+  } = opts || {};
+
+  const decisionLabel = decision === 'approved' ? 'approved' : 'rejected';
+  const decisionColor = decision === 'approved' ? '#15803d' : '#b91c1c';
+
+  let headline;
+  if (finalStatus === 'rejected') {
+    headline = '<p>Your booking has been <strong style="color:#b91c1c;">rejected</strong>.</p>';
+  } else if (finalStatus === 'approved') {
+    headline = '<p>All steps approved - your booking is <strong style="color:#15803d;">confirmed</strong>. ' +
+               'A separate email with the reschedule / cancel links is on the way.</p>';
+  } else {
+    const next = nextApproverName
+      ? ' Next up: <strong>' + esc(nextApproverName) + '</strong>.'
+      : '';
+    headline = '<p>Step ' + esc(stepOrder) + ' of ' + esc(totalSteps) +
+      ' was <strong style="color:' + decisionColor + ';">' + esc(decisionLabel) + '</strong>' +
+      (decidedBy ? ' by <strong>' + esc(decidedBy) + '</strong>' : '') +
+      '.' + next + '</p>';
+  }
+
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      '<tr><td style="padding:6px 0;color:#6b7280;width:140px;">Facility</td>' +
+        '<td style="padding:6px 0;"><strong>' + esc(facilityName) + '</strong> ' +
+        '<span style="color:#6b7280;">(' + esc(facilityType) + ')</span></td></tr>' +
+      '<tr><td style="padding:6px 0;color:#6b7280;">From</td>' +
+        '<td style="padding:6px 0;">' + esc(startAt) + '</td></tr>' +
+      '<tr><td style="padding:6px 0;color:#6b7280;">To</td>' +
+        '<td style="padding:6px 0;">' + esc(endAt) + '</td></tr>' +
+      (remark ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Note</td>' +
+          '<td style="padding:6px 0;"><em>' + esc(remark) + '</em></td></tr>'
+      ) : '') +
+    '</table>';
+
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    headline +
+    summary;
+
+  const subjPrefix =
+    finalStatus === 'rejected' ? 'Booking rejected'
+    : finalStatus === 'approved' ? 'Booking approved'
+    : 'Booking update';
+  return {
+    subject: subjPrefix + ': ' + facilityName + ' on ' + (startAt || '').slice(0, 10),
+    html: wrap(body, {
+      title: finalStatus === 'rejected' ? 'Booking rejected'
+           : finalStatus === 'approved' ? 'Booking approved'
+           : 'Booking update',
+    }),
+  };
+};
+
+// ----- bookingEndingSoon --------------------------------------------------
+// Fired by the pre-end cron to cleanup-chain recipients (typically cleaning
+// staff or maintenance team) some N minutes before a booking's end_at. The
+// per-facility lead time is configured by the admin on the facility form.
+
+exports.bookingEndingSoon = function (opts) {
+  const {
+    recipientName, leadMinutes, facilityName, facilityType,
+    startAt, endAt, bookerName, attendeeCount, title,
+  } = opts || {};
+
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      '<tr><td style="padding:6px 0;color:#6b7280;width:140px;">Facility</td>' +
+        '<td style="padding:6px 0;"><strong>' + esc(facilityName) + '</strong> ' +
+        (facilityType ? '<span style="color:#6b7280;">(' + esc(facilityType) + ')</span>' : '') +
+        '</td></tr>' +
+      '<tr><td style="padding:6px 0;color:#6b7280;">Ends at</td>' +
+        '<td style="padding:6px 0;"><strong>' + esc(endAt) + '</strong></td></tr>' +
+      (startAt ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Started</td>' +
+          '<td style="padding:6px 0;">' + esc(startAt) + '</td></tr>'
+      ) : '') +
+      (bookerName ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Booker</td>' +
+          '<td style="padding:6px 0;">' + esc(bookerName) + '</td></tr>'
+      ) : '') +
+      (attendeeCount ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Attendees</td>' +
+          '<td style="padding:6px 0;">' + esc(attendeeCount) + '</td></tr>'
+      ) : '') +
+      (title ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Title</td>' +
+          '<td style="padding:6px 0;">' + esc(title) + '</td></tr>'
+      ) : '') +
+    '</table>';
+
+  const headline = leadMinutes
+    ? 'This booking ends in about <strong>' + esc(leadMinutes) + ' minute(s)</strong>.'
+    : 'This booking is about to end.';
+
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (recipientName ? ' ' + esc(recipientName) : '') + ',' +
+    '</p>' +
+    '<p>' + headline + '</p>' +
+    summary +
+    '<p style="color:#6b7280;font-size:13px;margin-top:18px;">' +
+      'You\'re receiving this because an admin added you to the facility\'s ' +
+      'pre-end notification list.' +
+    '</p>';
+
+  return {
+    subject: 'Ends in ' + (leadMinutes || '?') + ' min: ' + facilityName + ' on ' + (endAt || '').slice(0, 10),
+    html: wrap(body, { title: 'Booking ending soon' }),
+  };
+};

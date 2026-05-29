@@ -1,0 +1,16 @@
+# Loose lower bounds (not hard pins) so pip picks the newest version that
+# has a prebuilt wheel for whichever Python you're on. The earlier hard
+# pins (numpy==1.26.4 etc.) didn't have wheels for Python 3.13+ and tried
+# to compile from source, which requires Visual Studio Build Tools on
+# Windows.
+#
+# Tested working on Python 3.10 - 3.13. For Python 3.14, install Python
+# 3.12 alongside (see README) - 3.14 wheels are still patchy across the
+# scientific Python stack as of late 2025.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+opencv-python-headless>=4.10
+numpy>=1.26
+python-multipart>=0.0.9
+pydantic>=2.9
