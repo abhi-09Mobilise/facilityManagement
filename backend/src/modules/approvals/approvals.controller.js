@@ -147,7 +147,9 @@ exports.decide = asyncHandler(async function (req, res) {
   // this transaction commits. We also recompute booking status by aggregating
   // the full set of decisions (continue-on-reject model).
   let nextApprovalRow = null;
-  let finalStatusForEmail = null; // F07 - booking_id if final status flipped to approved
+  let finalStatusForEmail = null;     // F07 - booking_id if final status flipped to approved
+  let finalStatusForBooker = null;    // 'approved' | 'rejected' | null - drives the booker step email
+  let bookingIdForBookerEmail = row.booking_id;
   await withTransaction(async function (conn) {
     await conn.execute(
       'UPDATE `booking_approvals` SET decision = ?, remark = ?, decided_at = NOW() WHERE id = ?',
@@ -177,6 +179,9 @@ exports.decide = asyncHandler(async function (req, res) {
       } else {
         await conn.execute('UPDATE `bookings` SET status = ? WHERE id = ?', [finalStatus, row.booking_id]);
         if (finalStatus === 'approved') finalStatusForEmail = row.booking_id;
+        // Track final status for the booker step-decision email (only
+        // checkin stage; checkout decisions don't change booking status).
+        finalStatusForBooker = finalStatus;
       }
     }
 
@@ -222,6 +227,7 @@ exports.decide = asyncHandler(async function (req, res) {
 
   // F07 - if THIS decision finalised the booking as approved, send confirmation
   // email (with reschedule + cancel links) to the booker.
+  // F09 - also fan out FYI emails to the facility notification recipients.
   if (finalStatusForEmail) {
     (async () => {
       try {
@@ -229,42 +235,30 @@ exports.decide = asyncHandler(async function (req, res) {
       } catch (e) {
         console.error('[approvals.decide] confirm email failed:', e && e.message);
       }
+      try { await bookingsCtrl._sendFacilityNotifications(finalStatusForEmail, 'approved'); }
+      catch (e) { console.error('[approvals.decide] notify failed:', e && e.message); }
     })();
   }
 
+  // Always fire a step-decision email to the booker so they see the chain
+  // progressing in real time. Skipped for checkout-stage decisions (which
+  // don't change booking status and the booker doesn't care about). The
+  // final-approved case also gets the rich bookingConfirmed email above;
+  // this lighter email is fine alongside since it covers the chain summary.
+  if ((row.stage || 'checkin') === 'checkin') {
+    (async () => {
+      try {
+        await bookingsCtrl._sendBookingStepDecisionEmail({
+          approvalId: id,
+          finalStatus: finalStatusForBooker,  // null = chain still in progress
+        });
+      } catch (e) {
+        console.error('[approvals.decide] booker step email failed:', e && e.message);
+      }
+    })();
+  }
+  // bookingIdForBookerEmail kept around for future use (e.g. logging).
+  void bookingIdForBookerEmail;
+
   return ok(res, null, `Decision recorded: ${decision}`);
 });
-//           approvalId: nextApprovalRow.id,
-//           token,
-//         });
-//       } catch (e) {
-//         console.error('[approvals.decide] next-step email failed:', e && e.message);
-//       }
-//     })();
-//   }
-
-//   // F07 - if THIS decision finalised the booking as approved, send confirmation
-//   // email (with reschedule + cancel links) to the booker.
-//   if (finalStatusForEmail) {
-//     (async () => {
-//       try {
-//         await bookingsCtrl._sendBookingConfirmedEmail(finalStatusForEmail);
-//       } catch (e) {
-//         console.error('[approvals.decide] confirm email failed:', e && e.message);
-//       }
-//     })();
-//   }
-
-//   return ok(res, null, `Decision recorded: ${decision}`);
-// };
-// ingsCtrl._sendBookingConfirmedEmail(finalStatusForEmail);
-//       } catch (e) {
-//         console.error('[approvals.decide] confirm email failed:', e && e.message);
-//       }
-//     })();
-//   }
-
-//   return ok(res, null, `Decision recorded: ${decision}`);
-// });
-// recorded: ${decision}`);
-// });

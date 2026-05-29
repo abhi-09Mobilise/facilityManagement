@@ -24,8 +24,10 @@ export const usersApi = {
   remove(id: number) {
     return api.delete<ApiEnvelope>('/users', { data: { id } }).then((r) => r.data);
   },
-  // Eligible approvers (is_approver=1) in the caller's tenant.
-  approvers(params: { tenant_id?: number } = {}) {
+  // Eligible approvers (is_approver=1) in the caller's tenant. The optional
+  // site_id / department_id filters power the per-facility chain picker
+  // (Site -> Department -> Approver cascade).
+  approvers(params: { tenant_id?: number; site_id?: number; department_id?: number } = {}) {
     return api.get<ApiEnvelope<ApproverOption[]>>('/users/approvers', { params }).then((r) => r.data);
   },
   // Lightweight self-info for the approver dashboard.

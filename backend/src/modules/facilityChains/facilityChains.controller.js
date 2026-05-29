@@ -23,7 +23,13 @@ const facilitiesCtrl = require('../facilities/facilities.controller');
 const VALID_KINDS = ['user', 'dynamic_dept_manager'];
 
 function stageFrom(req) {
-  return req.query.stage === 'checkout' ? 'checkout' : 'checkin';
+  // 'notification' is a third stage; 'cleanup' (pre-end notify) is a
+  // fourth. Anything else falls back to 'checkin' so older clients keep
+  // working.
+  if (req.query.stage === 'checkout')     return 'checkout';
+  if (req.query.stage === 'notification') return 'notification';
+  if (req.query.stage === 'cleanup')      return 'cleanup';
+  return 'checkin';
 }
 
 exports.list = asyncHandler(async function (req, res) {

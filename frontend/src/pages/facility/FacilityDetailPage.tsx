@@ -30,6 +30,8 @@ import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import BookingSuccessDialog from './components/BookingSuccessDialog';
 import PantryOrderPanel, { type PantryOrder } from './components/PantryOrderPanel'; // F06
+import DeskPicker from './components/DeskPicker'; // F09
+import SlotGrid from './components/SlotGrid';
 import { facilitiesApi } from '@/api/facilities.api';
 import { mealTimesApi } from '@/api/mealTimes.api';
 import { bookingsApi } from '@/api/bookings.api';
@@ -75,6 +77,10 @@ export default function FacilityDetailPage() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [fromTime, setFromTime] = useState('09:00');
   const [toTime, setToTime]     = useState('10:00');
+  // True once the user actually clicks a slot. Used to defer the floor
+  // map + downstream form sections until a time is picked — mirrors the
+  // BookMyShow flow of "pick showtime, then pick seats".
+  const [slotPicked, setSlotPicked] = useState(false);
   const [title, setTitle] = useState('');
   const [remarks, setRemarks] = useState('');
   const [selectedMealIds, setSelectedMealIds] = useState<number[]>([]);
@@ -97,6 +103,12 @@ export default function FacilityDetailPage() {
   // when 1 + guests.length > seatsRemaining for the chosen slot.
   const [guests, setGuests] = useState<{ email: string; fname?: string }[]>([]);
   const [pantryOrders, setPantryOrders] = useState<PantryOrder[]>([]); // F06
+  // F09 - desk selection. Multi-select: each chair = one attendee. Guests
+  // section only opens after the first chair is picked, and the guest rows
+  // are auto-synced to (selected chairs - 1) so we never reserve seats
+  // nobody needs. occupiedDesks comes back from /bookings/check.
+  const [selectedDeskIds, setSelectedDeskIds] = useState<string[]>([]);
+  const [occupiedDesks, setOccupiedDesks] = useState<string[]>([]);
   function addGuest()  { setGuests((g) => [...g, { email: '' }]); }
   function delGuest(i: number) { setGuests((g) => g.filter((_, idx) => idx !== i)); }
   function setGuest(i: number, patch: Partial<{ email: string; fname?: string }>) {
@@ -113,6 +125,23 @@ export default function FacilityDetailPage() {
     }
     return null;
   }, [guests]);
+
+  // F09 - for desk facilities the guest rows mirror the chair count
+  // (selected chairs - 1, since the booker themselves takes one chair).
+  // Add a chair => a new row appears; un-pick a chair => the trailing row
+  // is dropped. Non-desk types keep the manual Add guest workflow.
+  useEffect(() => {
+    if (!selected || selected.type !== 'desk') return;
+    const target = Math.max(0, selectedDeskIds.length - 1);
+    setGuests((prev) => {
+      if (prev.length === target) return prev;
+      if (prev.length < target) {
+        const extra = Array.from({ length: target - prev.length }, () => ({ email: '' } as { email: string; fname?: string }));
+        return [...prev, ...extra];
+      }
+      return prev.slice(0, target);
+    });
+  }, [selectedDeskIds.length, selected?.type]);
 
   const [successOpen, setSuccessOpen] = useState(false);
   const [lastBookingId, setLastBookingId] = useState('');
@@ -168,13 +197,81 @@ export default function FacilityDetailPage() {
     return `${date} ${toTime}:00`;
   }, [date, toTime]);
 
+  // Day-of-week rule for the chosen date (operating hours). Used both by
+  // the time-field min/max and the client-side validator below.
+  const dayRule = useMemo(() => {
+    if (!selected) return null;
+    return hours.find((h) => h.day_of_week === new Date(date).getDay()) || null;
+  }, [selected, hours, date]);
+  const openHHMM  = dayRule ? dayRule.open_time.slice(0, 5)  : '';
+  const closeHHMM = dayRule ? dayRule.close_time.slice(0, 5) : '';
+
   // Times must be in-range and well-ordered before we even bother calling
   // the backend. This is purely UX guardrails — the server re-validates.
+  // Also enforces the facility's advance-booking rules (lead time + max
+  // horizon) so the booker gets immediate feedback instead of a 422 round-trip.
   const localValidationError = useMemo(() => {
     if (!fromTime || !toTime) return 'Pick a start and end time';
     if (fromTime >= toTime) return 'End time must be after start time';
+    if (selected) {
+      if (!dayRule) return 'Facility is closed on the chosen date. Pick another day.';
+      if (fromTime < openHHMM)  return `Booking must start at ${openHHMM} or later (operating hours).`;
+      if (toTime   > closeHHMM) return `Booking must end by ${closeHHMM} (operating hours).`;
+      // Advance-rule guards (lead time + max horizon).
+      if (date) {
+        const startMs = new Date(`${date}T${fromTime}:00`).getTime();
+        const nowMs = Date.now();
+        const minAdv = Number(selected.min_advance_minutes);
+        if (Number.isFinite(minAdv) && minAdv > 0) {
+          const leadMin = (startMs - nowMs) / 60000;
+          if (leadMin < minAdv) {
+            return `This facility requires booking at least ${minAdv} minute(s) in advance.`;
+          }
+        }
+        const maxDays = Number(selected.max_advance_days);
+        if (Number.isFinite(maxDays) && maxDays > 0) {
+          const leadDays = (startMs - nowMs) / 86400000;
+          if (leadDays > maxDays) {
+            return `This facility can't be booked more than ${maxDays} day(s) in advance.`;
+          }
+        }
+      }
+    }
     return null;
-  }, [fromTime, toTime]);
+  }, [fromTime, toTime, selected, dayRule, openHHMM, closeHHMM, date]);
+
+  // Date input min/max derived from the facility's max_advance_days, plus
+  // the min_advance_minutes (which we round up to a day for the date picker
+  // — actual minute-level guard runs in localValidationError above).
+  const todayISO = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, []);
+  const maxDateISO = useMemo(() => {
+    if (!selected) return undefined;
+    const maxDays = Number(selected.max_advance_days);
+    if (!Number.isFinite(maxDays) || maxDays <= 0) return undefined;
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + maxDays);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, [selected]);
+  // One-line summary of active rules to show under the date row.
+  const rulesHint = useMemo(() => {
+    if (!selected) return '';
+    const bits: string[] = [];
+    const minAdv = Number(selected.min_advance_minutes);
+    if (Number.isFinite(minAdv) && minAdv > 0) bits.push(`min ${minAdv} min ahead`);
+    const maxDays = Number(selected.max_advance_days);
+    if (Number.isFinite(maxDays) && maxDays > 0) bits.push(`up to ${maxDays} day(s) ahead`);
+    const d = Number(selected.max_per_user_per_day);
+    if (Number.isFinite(d) && d > 0) bits.push(`max ${d}/day per user`);
+    const w = Number(selected.max_per_user_per_week);
+    if (Number.isFinite(w) && w > 0) bits.push(`max ${w}/week per user`);
+    const m = Number(selected.max_per_user_per_month);
+    if (Number.isFinite(m) && m > 0) bits.push(`max ${m}/month per user`);
+    return bits.length ? `Booking rules: ${bits.join(' · ')}.` : '';
+  }, [selected]);
 
   // Debounced live conflict probe. Cancels in-flight requests when the
   // user is still typing so we don't show stale results.
@@ -187,11 +284,17 @@ export default function FacilityDetailPage() {
     setCheckState('checking');
     const mySeq = ++probeSeqRef.current;
     const handle = window.setTimeout(() => {
+      // For desk facilities the attendee count IS the chair count - each
+      // claimed chair = one bottom in a seat. For everything else the
+      // booker + their guests are the head count.
+      const attendees = selected && selected.type === 'desk'
+        ? Math.max(1, selectedDeskIds.length)
+        : 1 + guests.length;
       bookingsApi.check({
         facility_id: Number(facilityId),
         start_at: startAtStr,
         end_at: endAtStr,
-        attendees: 1 + guests.length,
+        attendees,
       })
         .then((res) => {
           if (mySeq !== probeSeqRef.current) return;     // newer probe in-flight
@@ -203,6 +306,12 @@ export default function FacilityDetailPage() {
             seatsRemaining: res.data.seats_remaining,
           });
           setCheckState(res.data.conflict ? 'conflict' : 'free');
+          // F09 - refresh which chairs are taken for this window. Any of
+          // the booker's picks that just got claimed by someone else are
+          // dropped from the selection so they have to re-pick.
+          const occ = res.data.occupied_desks || [];
+          setOccupiedDesks(occ);
+          setSelectedDeskIds((prev) => prev.filter((id) => !occ.includes(id)));
         })
         .catch(() => {
           if (mySeq !== probeSeqRef.current) return;
@@ -210,7 +319,8 @@ export default function FacilityDetailPage() {
         });
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [facilityId, startAtStr, endAtStr, localValidationError, guests.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facilityId, startAtStr, endAtStr, localValidationError, guests.length, selectedDeskIds.length, selected?.type]);
 
   async function handleConfirm() {
     if (!selected) return;
@@ -222,6 +332,25 @@ export default function FacilityDetailPage() {
         : 'That slot is already booked. Pick another time.';
       setSubmitError(msg);
       return;
+    }
+    // F09 - desk facilities require at least one chair when the admin has
+    // actually laid chairs on the floor plan. Also reject if any of the
+    // picked chairs got grabbed by someone else while the form sat open.
+    if (selected.type === 'desk' && layoutChairCount > 0) {
+      if (selectedDeskIds.length === 0) {
+        setSubmitError('Pick at least one chair from the floor plan below before confirming.');
+        return;
+      }
+      const stolen = selectedDeskIds.filter((id) => occupiedDesks.includes(id));
+      if (stolen.length > 0) {
+        setSubmitError(`Chair${stolen.length === 1 ? '' : 's'} ${stolen.join(', ')} ${stolen.length === 1 ? 'was' : 'were'} just claimed by someone else. Pick another${stolen.length === 1 ? ' one' : ''}.`);
+        setSelectedDeskIds((prev) => prev.filter((id) => !occupiedDesks.includes(id)));
+        return;
+      }
+      if (guests.length > selectedDeskIds.length - 1) {
+        setSubmitError(`You've claimed ${selectedDeskIds.length} chair${selectedDeskIds.length === 1 ? '' : 's'} but added ${guests.length} guest${guests.length === 1 ? '' : 's'}. Pick more chairs or remove some guests.`);
+        return;
+      }
     }
     setSubmitError(null);
     setSubmitting(true);
@@ -239,6 +368,11 @@ export default function FacilityDetailPage() {
           email: g.email.trim(),
         })),
         pantry_orders: pantryOrders, // F06
+        // F09 - send the multi-chair selection as a comma-joined string;
+        // backend splits it for the race check.
+        desk_id: selected.type === 'desk' && selectedDeskIds.length > 0
+          ? selectedDeskIds.join(',')
+          : undefined,
       });
       if (!res.status || !res.data) throw new Error(res.msg || 'Booking failed');
       setLastBookingId(String(res.data.id));
@@ -267,7 +401,6 @@ export default function FacilityDetailPage() {
   }
 
   const typeLabel = TYPE_LABEL[facilityType];
-  const dayRule = selected ? hours.find((h) => h.day_of_week === new Date(date).getDay()) : null;
   const location = selected ? [selected.site_name, selected.floor_name].filter(Boolean).join(' · ') : '';
 
   // Hint text for the time row: shows operating hours if we know them.
@@ -279,12 +412,31 @@ export default function FacilityDetailPage() {
     return `Operating hours: ${open}–${close}`;
   })();
 
+  // For desk facilities only block submit when the admin has actually
+  // placed chairs on the layout. If layout has no chairs (admin hasn't
+  // gotten round to it), fall through to the regular booking flow.
+  const layoutChairCount = (() => {
+    if (!selected || !selected.layout_json) return 0;
+    try {
+      const parsed = typeof selected.layout_json === 'string'
+        ? JSON.parse(selected.layout_json)
+        : selected.layout_json;
+      const objs = parsed && Array.isArray(parsed.objects) ? parsed.objects : [];
+      return objs.filter((o: { type?: string }) => o && o.type === 'chair').length;
+    } catch { return 0; }
+  })();
   const canSubmit =
     !!selected
     && !localValidationError
     && checkState === 'free'
     && agreeTnc
-    && !submitting;
+    && !submitting
+    // F09 - on desk facilities, block submit until the user has claimed at
+    // least one chair and every claimed chair is still free.
+    && (selected.type !== 'desk' || layoutChairCount === 0
+        || (selectedDeskIds.length > 0
+            && selectedDeskIds.every((id) => !occupiedDesks.includes(id))
+            && guests.length <= Math.max(0, selectedDeskIds.length - 1)));
 
   return (
     <Box>
@@ -304,92 +456,108 @@ export default function FacilityDetailPage() {
           No {typeLabel.toLowerCase()}s are available for your tenant. Ask your admin to add one.
         </Alert>
       ) : (
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={5}>
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Pick a {typeLabel.toLowerCase()}</Typography>
-              <TextField
-                select fullWidth size="small" label={typeLabel}
-                value={facilityId}
-                onChange={(e) => setFacilityId(Number(e.target.value))}
-              >
-                {facilities.map((f) => (
-                  <MenuItem key={f.id} value={f.id}>
-                    {f.name} {f.site_name ? `· ${f.site_name}` : ''} {f.capacity ? `· ${f.capacity} seats` : ''}
-                  </MenuItem>
-                ))}
-              </TextField>
+        // Single-column form. Everything stacks top-to-bottom so the
+        // booker can scroll through and fill the whole thing in one pass
+        // instead of bouncing between two columns.
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          {/* 1) Facility picker */}
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+            Pick a {typeLabel.toLowerCase()}
+          </Typography>
+          <TextField
+            select fullWidth size="small" label={typeLabel}
+            value={facilityId}
+            onChange={(e) => setFacilityId(Number(e.target.value))}
+          >
+            {facilities.map((f) => (
+              <MenuItem key={f.id} value={f.id}>
+                {f.name} {f.site_name ? `· ${f.site_name}` : ''} {f.capacity ? `· ${f.capacity} seats` : ''}
+              </MenuItem>
+            ))}
+          </TextField>
 
-              {loadingDetail && (
-                <Box display="flex" justifyContent="center" py={4}><CircularProgress size={24} /></Box>
-              )}
+          {loadingDetail && (
+            <Box display="flex" justifyContent="center" py={4}><CircularProgress size={24} /></Box>
+          )}
 
-              {selected && !loadingDetail && (
-                <Box sx={{ mt: 2 }}>
-                  <Box sx={{
-                    height: 160, bgcolor: 'action.hover',
-                    borderRadius: 1, display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', fontSize: 48, mb: 2,
-                  }}>
-                    {TYPE_EMOJI[facilityType]}
-                  </Box>
-                  <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>{selected.name}</Typography>
-                  {location && (
-                    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: 'text.secondary', mb: 0.5 }}>
-                      <LocationOnIcon sx={{ fontSize: 16 }} />
-                      <Typography variant="body2">{location}</Typography>
-                    </Stack>
-                  )}
-                  <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: 'text.secondary', mb: 1 }}>
-                    <GroupsIcon sx={{ fontSize: 16 }} />
-                    <Typography variant="body2">Seats {selected.capacity}</Typography>
+          {/* 2) Facility summary (no image - keeps the page lean) */}
+          {selected && !loadingDetail && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>{selected.name}</Typography>
+              <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" sx={{ color: 'text.secondary', mb: 1 }}>
+                {location && (
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <LocationOnIcon sx={{ fontSize: 16 }} />
+                    <Typography variant="body2">{location}</Typography>
                   </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {selected.description || 'A bookable space at your campus.'}
-                  </Typography>
-                  {selected.requires_approval ? (
-                    <Alert severity="warning" sx={{ mt: 1.5 }}>
-                      This booking needs manager approval. You'll get an email when it's reviewed.
-                    </Alert>
-                  ) : null}
-                </Box>
+                )}
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  <GroupsIcon sx={{ fontSize: 16 }} />
+                  <Typography variant="body2">Seats {selected.capacity}</Typography>
+                </Stack>
+              </Stack>
+              {selected.description && (
+                <Typography variant="body2" color="text.secondary">{selected.description}</Typography>
               )}
-            </Paper>
-          </Grid>
+              {selected.requires_approval ? (
+                <Alert severity="warning" sx={{ mt: 1.5 }}>
+                  This booking needs manager approval. You'll get an email when it's reviewed.
+                </Alert>
+              ) : null}
+            </Box>
+          )}
 
-          <Grid item xs={12} md={7}>
-            <Paper variant="outlined" sx={{ p: 2 }}>
+          {!selected && !loadingDetail && (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+              Pick a {typeLabel.toLowerCase()} above to start filling out the booking details.
+            </Typography>
+          )}
+
+          {/* 3) Time + the rest of the form */}
+          {selected && (
+            <>
+              <Divider sx={{ my: 3 }} />
               <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Pick a time</Typography>
-
-              {!selected ? (
-                <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
-                  Pick a {typeLabel.toLowerCase()} on the left to see availability.
-                </Typography>
-              ) : (
-                <>
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mb={1}>
+                  {/* Date picker stays as a regular input — slot grid
+                      reflows whenever this changes. */}
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mb={1.5} alignItems={{ sm: 'flex-end' }}>
                     <TextField
                       type="date" label="Date" size="small" InputLabelProps={{ shrink: true }}
-                      value={date} onChange={(e) => setDate(e.target.value)}
+                      value={date}
+                      onChange={(e) => {
+                        setDate(e.target.value);
+                        setSlotPicked(false);  // changing day clears the slot
+                      }}
+                      inputProps={{ min: todayISO, max: maxDateISO }}
                       sx={{ minWidth: 160 }}
                     />
-                    {/* 5-minute granularity (step=300s) feels right for rooms */}
-                    <TextField
-                      type="time" label="From" size="small" InputLabelProps={{ shrink: true }}
-                      value={fromTime}
-                      onChange={(e) => setFromTime(e.target.value)}
-                      inputProps={{ step: 300 }}
-                      sx={{ minWidth: 140 }}
-                    />
-                    <TextField
-                      type="time" label="To" size="small" InputLabelProps={{ shrink: true }}
-                      value={toTime}
-                      onChange={(e) => setToTime(e.target.value)}
-                      inputProps={{ step: 300 }}
-                      sx={{ minWidth: 140 }}
-                    />
+                    <Typography variant="caption" color="text.secondary">{hoursHint}</Typography>
                   </Stack>
-                  <Typography variant="caption" color="text.secondary">{hoursHint}</Typography>
+                  {rulesHint && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      {rulesHint}
+                    </Typography>
+                  )}
+
+                  {/* BookMyShow-style slot grid. One button per bookable
+                      slot derived from the facility's operating_hours +
+                      slot_minutes. Click sets fromTime/toTime + flags
+                      slotPicked so the floor map / guests section can
+                      render below. */}
+                  <SlotGrid
+                    facilityId={selected.id}
+                    date={date}
+                    dayRule={dayRule}
+                    attendees={selected.type === 'desk'
+                      ? Math.max(1, selectedDeskIds.length || 1)
+                      : 1 + guests.length}
+                    selectedStart={slotPicked ? fromTime : ''}
+                    onPick={(start, end) => {
+                      setFromTime(start);
+                      setToTime(end);
+                      setSlotPicked(true);
+                    }}
+                  />
 
                   {/* Availability indicator */}
                   <Box sx={{ mt: 2 }}>
@@ -417,6 +585,50 @@ export default function FacilityDetailPage() {
                     ) : null}
                   </Box>
 
+                  {/* F09 - floor-plan view. Shown for any facility that has
+                       a saved layout (desk + meeting_room). For desks the
+                       chairs are clickable; for meeting rooms it's a
+                       read-only "here's where this room sits on the floor"
+                       reference. */}
+                  {/* Floor map reveals AFTER a slot is clicked — mirrors
+                      BookMyShow's "pick showtime → pick seats" flow. */}
+                  {slotPicked
+                    && (selected.type === 'desk' || selected.type === 'meeting_room')
+                    && !localValidationError
+                    && selected.layout_json && (
+                    <Box sx={{ mt: 3 }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                        {selected.type === 'desk' ? 'Pick your chair' : 'Floor plan'}
+                      </Typography>
+                      <DeskPicker
+                        value={selected.layout_json ?? null}
+                        occupiedDeskIds={occupiedDesks}
+                        selectedDeskIds={selectedDeskIds}
+                        onToggle={(id) => {
+                          if (occupiedDesks.includes(id)) return; // belt and braces
+                          setSelectedDeskIds((prev) => prev.includes(id)
+                            ? prev.filter((x) => x !== id)
+                            : [...prev, id]);
+                        }}
+                      />
+                      {selected.type === 'desk' && (selectedDeskIds.length > 0 ? (
+                        <Alert severity="success" sx={{ mt: 1 }}>
+                          You've claimed <strong>{selectedDeskIds.length}</strong> chair{selectedDeskIds.length === 1 ? '' : 's'}
+                          {' '}(<strong>{selectedDeskIds.join(', ')}</strong>). They'll be locked to you once you confirm.
+                        </Alert>
+                      ) : (
+                        <Alert severity="info" sx={{ mt: 1 }}>
+                          Click available (green) chairs above to claim them — one chair per attendee.
+                        </Alert>
+                      ))}
+                      {selected.type === 'meeting_room' && (
+                        <Alert severity="info" sx={{ mt: 1 }}>
+                          This room is highlighted on the floor plan above.
+                        </Alert>
+                      )}
+                    </Box>
+                  )}
+
                   <Divider sx={{ my: 3 }} />
                   <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Your booking</Typography>
                   <Stack spacing={2}>
@@ -425,13 +637,46 @@ export default function FacilityDetailPage() {
                     <TextField label="Remarks" size="small" fullWidth multiline minRows={2}
                       value={remarks} onChange={(e) => setRemarks(e.target.value)} />
 
-                    {/* ----- Attendees / guests ----- */}
+                    {/* Live seat-count chip for desks - always shown so
+                        the booker can see "0 of 8 chairs taken · up to
+                        7 guests" before they've clicked anything, and the
+                        numbers tick up as they pick. */}
+                    {selected && selected.type === 'desk' && layoutChairCount > 0 && (() => {
+                      const taken  = occupiedDesks.length;
+                      const total  = layoutChairCount;
+                      const picked = selectedDeskIds.length;
+                      const upTo = picked > 0
+                        ? Math.max(0, picked - 1)
+                        : Math.max(0, total - taken - 1);
+                      return (
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Chip
+                            size="small"
+                            color={checkState === 'conflict' ? 'error' : (picked > 0 ? 'primary' : 'success')}
+                            label={
+                              `${taken} of ${total} chair${total === 1 ? '' : 's'} taken` +
+                              (picked > 0 ? ` · ${picked} picked` : '') +
+                              ` · up to ${upTo} guest${upTo === 1 ? '' : 's'}`
+                            }
+                          />
+                        </Stack>
+                      );
+                    })()}
+
+                    {/* ----- Attendees / guests -----
+                          For desk facilities the guest section stays hidden
+                          until the booker has actually claimed a chair, and
+                          the cap is (chairs - 1) because each chair = one
+                          attendee (booker + guests). */}
+                    {!(selected.type === 'desk' && layoutChairCount > 0 && selectedDeskIds.length === 0) && (
                     <Box>
                       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
                         <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                          People joining you (besides yourself)
+                          {selected.type === 'desk' && selectedDeskIds.length > 0
+                            ? `Guests for the other ${Math.max(0, selectedDeskIds.length - 1)} chair${selectedDeskIds.length - 1 === 1 ? '' : 's'}`
+                            : 'People joining you (besides yourself)'}
                         </Typography>
-                        {checkInfo && checkInfo.mode === 'shared' && (
+                        {selected && selected.type !== 'desk' && checkInfo && checkInfo.mode === 'shared' && (
                           <Chip
                             size="small"
                             color={checkState === 'conflict' ? 'error' : 'success'}
@@ -441,7 +686,7 @@ export default function FacilityDetailPage() {
                             }
                           />
                         )}
-                        {checkInfo && checkInfo.mode === 'exclusive' && selected && (
+                        {selected && selected.type !== 'desk' && checkInfo && checkInfo.mode === 'exclusive' && (
                           <Chip
                             size="small"
                             variant="outlined"
@@ -451,42 +696,59 @@ export default function FacilityDetailPage() {
 
                       {guests.length === 0 && (
                         <Typography variant="caption" color="text.secondary">
-                          Just you so far. Add emails of people who'll be joining.
+                          {selected.type === 'desk'
+                            ? 'You\'ve only claimed your own chair so far. Pick more chairs above to add guests.'
+                            : 'Just you so far. Add emails of people who\'ll be joining.'}
                         </Typography>
                       )}
 
                       <Stack spacing={1} mt={1}>
-                        {guests.map((g, i) => (
-                          <Stack key={i} direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
-                            <TextField
-                              size="small" type="email" label={`Guest ${i + 1} email`} required
-                              value={g.email}
-                              onChange={(e) => setGuest(i, { email: e.target.value })}
-                              sx={{ flex: 1, minWidth: 220 }}
-                            />
-                            <TextField
-                              size="small" label="Name (optional)"
-                              value={g.fname || ''}
-                              onChange={(e) => setGuest(i, { fname: e.target.value })}
-                              sx={{ width: { xs: '100%', sm: 220 } }}
-                            />
-                            <Button size="small" color="error" onClick={() => delGuest(i)}>Remove</Button>
-                          </Stack>
-                        ))}
+                        {guests.map((g, i) => {
+                          // On desks, each guest row corresponds to one of
+                          // the selected chairs after the booker's own.
+                          // Label the row with that chair id when we know it.
+                          const isDesk = selected.type === 'desk';
+                          const chairForRow = isDesk ? selectedDeskIds[i + 1] : null;
+                          return (
+                            <Stack key={i} direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                              <TextField
+                                size="small" type="email" required
+                                label={chairForRow ? `Guest for ${chairForRow}` : `Guest ${i + 1} email`}
+                                value={g.email}
+                                onChange={(e) => setGuest(i, { email: e.target.value })}
+                                sx={{ flex: 1, minWidth: 220 }}
+                              />
+                              <TextField
+                                size="small" label="Name (optional)"
+                                value={g.fname || ''}
+                                onChange={(e) => setGuest(i, { fname: e.target.value })}
+                                sx={{ width: { xs: '100%', sm: 220 } }}
+                              />
+                              {!isDesk && (
+                                <Button size="small" color="error" onClick={() => delGuest(i)}>Remove</Button>
+                              )}
+                            </Stack>
+                          );
+                        })}
                       </Stack>
 
-                      <Box mt={1}>
-                        <Button
-                          size="small" variant="outlined" onClick={addGuest}
-                          disabled={
-                            !!checkInfo && checkInfo.mode === 'shared'
-                              && (1 + guests.length + 1) > (checkInfo.seatsTaken + checkInfo.seatsRemaining)
-                          }
-                        >
-                          Add guest
-                        </Button>
-                      </Box>
+                      {/* Add guest button only for non-desk facilities -
+                          desks auto-spawn one row per claimed chair. */}
+                      {selected.type !== 'desk' && (
+                        <Box mt={1}>
+                          <Button
+                            size="small" variant="outlined" onClick={addGuest}
+                            disabled={
+                              !!checkInfo && checkInfo.mode === 'shared'
+                                && (1 + guests.length + 1) > (checkInfo.seatsTaken + checkInfo.seatsRemaining)
+                            }
+                          >
+                            Add guest
+                          </Button>
+                        </Box>
+                      )}
                     </Box>
+                    )}
 
                     {/* Department line - auto-pulled from the logged-in user. */}
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -545,9 +807,7 @@ export default function FacilityDetailPage() {
                 </>
               )}
             </Paper>
-          </Grid>
-        </Grid>
-      )}
+          )}
 
       <BookingSuccessDialog
         open={successOpen}
@@ -563,3 +823,14 @@ export default function FacilityDetailPage() {
     </Box>
   );
 }
+//         pending={lastStatus === 'pending'}
+//         onClose={() => setSuccessOpen(false)}
+//         onCreateNew={() => { setSuccessOpen(false); navigate('/facility'); }}
+//         onViewDetails={() => {
+//           setSuccessOpen(false);
+//           navigate('/my-bookings?highlight=' + encodeURIComponent(lastBookingId));
+//         }}
+//       />
+//     </Box>
+//   );
+// }

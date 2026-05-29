@@ -64,7 +64,7 @@ exports.getOne = asyncHandler(async function (req, res) {
   );
   if (rows.length === 0) return notFound(res, 'Pantry not found');
   const items = await query(
-    'SELECT id, pantry_id, name, meal_time_id, price, status ' +
+    'SELECT id, pantry_id, name, meal_time_id, price, is_paid, status ' +
     '  FROM `pantry_menu_items` WHERE pantry_id = ? ORDER BY name',
     [id]
   );
@@ -128,7 +128,7 @@ exports.listMenu = asyncHandler(async function (req, res) {
     return fail(res, 'Forbidden', 403);
   }
   const rows = await query(
-    'SELECT id, pantry_id, name, meal_time_id, price, status ' +
+    'SELECT id, pantry_id, name, meal_time_id, price, is_paid, status ' +
     '  FROM `pantry_menu_items` WHERE pantry_id = ? AND status = 1 ORDER BY name',
     [id]
   );
@@ -149,12 +149,16 @@ exports.replaceMenu = asyncHandler(async function (req, res) {
     for (const it of items) {
       const name = String(it.name || '').trim();
       if (!name) continue;
-      const price = Number(it.price || 0);
+      // is_paid drives whether the booker sees a price chip. Free items
+      // pin price to 0 server-side so a stale value from the form doesn't
+      // accidentally make a "free" item billable.
+      const isPaid = it.is_paid === 1 || it.is_paid === true ? 1 : 0;
+      const price = isPaid ? Number(it.price || 0) : 0;
       const mealId = it.meal_time_id ? Number(it.meal_time_id) : null;
       const status = it.status === 0 ? 0 : 1;
       await conn.execute(
-        'INSERT INTO `pantry_menu_items` (pantry_id, name, meal_time_id, price, status) VALUES (?, ?, ?, ?, ?)',
-        [id, name, mealId, price, status]
+        'INSERT INTO `pantry_menu_items` (pantry_id, name, meal_time_id, price, is_paid, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, name, mealId, price, isPaid, status]
       );
     }
   });
@@ -176,7 +180,7 @@ exports.byFacility = async function byFacility(facilityId) {
   const ids = pantries.map((p) => p.id);
   const placeholders = ids.map(() => '?').join(',');
   const items = await query(
-    'SELECT id, pantry_id, name, meal_time_id, price ' +
+    'SELECT id, pantry_id, name, meal_time_id, price, is_paid ' +
     '  FROM `pantry_menu_items` WHERE status = 1 AND pantry_id IN (' + placeholders + ') ORDER BY name',
     ids
   );

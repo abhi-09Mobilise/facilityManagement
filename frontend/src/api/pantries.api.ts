@@ -17,6 +17,9 @@ export interface PantryMenuItem {
   pantry_id?: number;
   name: string;
   meal_time_id?: number | null;
+  // Whether the item carries a price; when 0 the backend forces price to 0
+  // so the booker-side panel can show a "Free" badge instead of a price.
+  is_paid?: 0 | 1;
   price: number;
   status?: 0 | 1;
 }
@@ -67,8 +70,8 @@ export const facilityPantriesApi = {
     return api.put<ApiEnvelope<{ count: number }>>(`/facilities/${facilityId}/pantries`, { pantry_ids: pantryIds })
       .then((r) => r.data);
   },
-  // For the booking page - returns pantries+items linked to this facility's site.
+  // For the booking page - returns pantries+items linked to a facility.
   menu(facilityId: number) {
-    return api.get<ApiEnvelope<FacilityMenuPantry[]>>(`/facilities/${facilityId}/menu`).then((r) => r.data);
+    return api.get<ApiEnvelope<FacilityMenuPantry[]>>(`/facilities/${facilityId}/pantries/menu`).then((r) => r.data);
   },
 };

@@ -22,6 +22,12 @@ router.use('/pantries',           require('../modules/pantries/pantries.routes')
 router.use('/bookings',  require('../modules/bookings/bookings.routes'));
 router.use('/approvals', require('../modules/approvals/approvals.routes'));
 
+// Floor-plan auto-detection (admin only; proxies to Python microservice)
+router.use('/floor-scan', require('../modules/floorScan/floorScan.routes'));
+
+// Cron-driven side jobs (gated by CRON_SECRET, no user auth)
+router.use('/cron', require('../modules/cron/cron.routes'));
+
 // Admin dashboards (super_admin + tenant_admin)
 router.use('/dashboards', require('../modules/dashboards/dashboards.routes'));
 

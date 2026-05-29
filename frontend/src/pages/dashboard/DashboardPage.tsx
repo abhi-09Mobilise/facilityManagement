@@ -16,6 +16,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { dashboardsApi, type DashboardPayload, type DashboardFacility } from '@/api/dashboards.api';
+import type { FacilityType } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -47,6 +48,12 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   // F08
   const [tab, setTab] = useState<'overview' | 'timeline'>('overview');
+  // Stacked-bar hover state: which specific segment is the cursor on?
+  // Drives a custom Tooltip content renderer that shows ONLY that segment,
+  // not the whole stack's payload (Recharts' default).
+  const [hovered, setHovered] = useState<{
+    type: string; key: string; name: string; value: number; color: string;
+  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -89,13 +96,80 @@ export default function DashboardPage() {
 
   const { summary, per_facility, as_of } = data;
 
-  // Bar chart: facility name + percent of today's open hours that are booked.
-  const barData = per_facility.map((f) => ({
-    name: f.name,
-    utilization: f.today_open_minutes > 0
-      ? Math.round((f.today_booked_minutes / f.today_open_minutes) * 100)
-      : 0,
-  }));
+  // Stacked bar chart: one bar per facility *type*, stacked by individual
+  // facility. Each segment height = that facility's booked minutes today.
+  // Lets the admin see at a glance which specific facility is pulling the
+  // weight in each type ("Gyms total 240 min, of which Cardio = 180").
+  //
+  // Y-axis is in minutes (concrete) rather than a percentage — % per
+  // facility doesn't sum meaningfully when stacked.
+  const TYPE_DISPLAY_ORDER: FacilityType[] = [
+    'meeting_room', 'conference_room', 'gym', 'desk', 'swimming_pool', 'other',
+  ];
+  const TYPE_LABEL_BAR: Record<FacilityType, string> = {
+    meeting_room: 'Meeting rooms', conference_room: 'Conference rooms',
+    gym: 'Gyms', desk: 'Desks', swimming_pool: 'Swimming pools', other: 'Other',
+  };
+  // Stable palette of distinct hues. We cycle through if a single type
+  // has more facilities than the palette length.
+  const FACILITY_PALETTE = [
+    '#2563eb', '#16a34a', '#f97316', '#a855f7', '#ec4899',
+    '#0ea5e9', '#dc2626', '#14b8a6', '#ca8a04', '#6366f1',
+    '#84cc16', '#f43f5e', '#06b6d4', '#d97706',
+  ];
+
+  // Bucket facilities by type, then pivot so each bar (= type) has one
+  // numeric key per facility. Missing keys render no segment.
+  const buckets = new Map<FacilityType, typeof per_facility>();
+  for (const f of per_facility) {
+    const t = (f.type || 'other') as FacilityType;
+    if (!buckets.has(t)) buckets.set(t, []);
+    buckets.get(t)!.push(f);
+  }
+  // Per-facility colour map (stable across renders so the same chart
+  // colour follows the same facility across reloads in the same session).
+  const facilityColors: Record<string, string> = {};
+  // List of facility keys we need to render as <Bar> elements, in stack
+  // order (so tooltips read top-to-bottom in a sensible order too).
+  const facilityKeys: { key: string; name: string; type: FacilityType }[] = [];
+  let colorIdx = 0;
+  for (const t of TYPE_DISPLAY_ORDER) {
+    const list = buckets.get(t);
+    if (!list) continue;
+    for (const f of list) {
+      const key = 'f-' + f.id;
+      facilityKeys.push({ key, name: f.name, type: t });
+      facilityColors[key] = FACILITY_PALETTE[colorIdx % FACILITY_PALETTE.length];
+      colorIdx++;
+    }
+  }
+  // One row per type, containing each facility's booked_minutes as a
+  // separate numeric column. Recharts stacks them with `stackId="util"`.
+  const barData = TYPE_DISPLAY_ORDER.flatMap((t) => {
+    const list = buckets.get(t);
+    if (!list) return [];
+    const row: Record<string, number | string> = {
+      type: TYPE_LABEL_BAR[t] || t,
+    };
+    for (const f of list) {
+      row['f-' + f.id] = Math.max(0, f.today_booked_minutes || 0);
+    }
+    return [row];
+  });
+  // For each type, find the last facility-key that actually has a non-zero
+  // value — that's the topmost visible segment of its stack and gets the
+  // rounded corners. Doing it per-row beats relying on Recharts' default
+  // "round only the last Bar component" behaviour, which often misses when
+  // the literal-last facility happens to be empty for a type.
+  const topMostByType = new Map<string, string>();
+  for (const row of barData) {
+    let topKey = '';
+    for (const fk of facilityKeys) {
+      const v = Number(row[fk.key]) || 0;
+      if (v > 0) topKey = fk.key;
+    }
+    if (topKey) topMostByType.set(String(row.type), topKey);
+  }
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -144,35 +218,135 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* ---- utilization bar chart ---- */}
+      {/* ---- utilization bar chart (stacked by facility within each type) ---- */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">
-            Today's utilization (% of open hours booked)
+            Today's utilization by facility type
           </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Each bar = one type. Each segment = one facility's booked minutes today.
+          </p>
         </CardHeader>
         <CardContent>
           {per_facility.length === 0 ? (
             <EmptyHint label="No active facilities yet." />
           ) : (
-            <div className="h-[280px]">
+            <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData} margin={{ top: 10, right: 16, left: 0, bottom: 24 }}>
+                <BarChart
+                  data={barData}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 24 }}
+                  // Cap bar width so a chart with only 2-3 types doesn't get
+                  // chunky landscape-width bars. Recharts shrinks below this
+                  // if the chart is narrow.
+                  barCategoryGap="25%"
+                >
                   <XAxis
-                    dataKey="name"
+                    dataKey="type"
                     tick={{ fontSize: 12 }}
-                    angle={-20}
-                    textAnchor="end"
                     interval={0}
-                    height={60}
+                    height={40}
+                    axisLine={false}
+                    tickLine={false}
                   />
                   <YAxis
-                    domain={[0, 100]}
                     tick={{ fontSize: 12 }}
-                    tickFormatter={(v: number) => v + '%'}
+                    tickFormatter={(v: number) => fmtMinutes(v)}
+                    axisLine={false}
+                    tickLine={false}
                   />
-                  <Tooltip formatter={(v: number) => v + '%'} />
-                  <Bar dataKey="utilization" fill={OCCUPIED_BLUE} radius={[4, 4, 0, 0]} />
+                  {/* Custom tooltip content: only renders the segment under
+                      the cursor (driven by `hovered` state). When nothing
+                      is hovered the tooltip is empty / invisible. */}
+                  <Tooltip
+                    cursor={{ fill: 'rgba(15, 23, 42, 0.04)' }}
+                    content={() => {
+                      if (!hovered) return null;
+                      return (
+                        <div style={{
+                          background: 'white',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: 8,
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                          padding: '8px 12px',
+                          minWidth: 160,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{
+                              width: 10, height: 10, borderRadius: 2,
+                              background: hovered.color,
+                              flexShrink: 0,
+                            }} />
+                            <strong style={{ fontSize: 13 }}>{hovered.name}</strong>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                            {hovered.type}
+                          </div>
+                          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>
+                            {fmtMinutes(hovered.value)} booked today
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Legend
+                    verticalAlign="bottom"
+                    iconType="circle"
+                    iconSize={8}
+                    wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                    formatter={(value: string) => {
+                      const fk = facilityKeys.find((k) => k.key === value);
+                      return fk?.name || value;
+                    }}
+                  />
+                  {facilityKeys.map(({ key, name }) => (
+                    <Bar
+                      key={key}
+                      dataKey={key}
+                      stackId="util"
+                      fill={facilityColors[key]}
+                      // White stroke separates stacked segments so they read
+                      // as distinct facilities even when the colours are
+                      // similar in tone.
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                      // Round corners only when this facility is the
+                      // top-most non-zero segment of its bar (i.e. crowns
+                      // the stack for THIS type). Cell-level radius keeps
+                      // the cap on the actual bar top regardless of which
+                      // Bar component is drawing last in the stack.
+                      shape={(props: unknown) => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const p = props as any;
+                        const isTop = topMostByType.get(String(p.payload?.type)) === key;
+                        const radius = isTop ? 'M' +
+                          (p.x) + ',' + (p.y + 8) +
+                          ' a 8,8 0 0 1 8,-8 h ' + (p.width - 16) +
+                          ' a 8,8 0 0 1 8,8 v ' + (p.height - 8) +
+                          ' h ' + (-p.width) + ' z'
+                          : 'M' + p.x + ',' + p.y +
+                            ' h ' + p.width +
+                            ' v ' + p.height +
+                            ' h ' + (-p.width) + ' z';
+                        return (
+                          <path d={radius} fill={p.fill} stroke="#ffffff" strokeWidth={2} />
+                        );
+                      }}
+                      onMouseEnter={(data: unknown) => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const d = data as any;
+                        setHovered({
+                          type: String(d.type || ''),
+                          key,
+                          name,
+                          value: Number(d[key]) || 0,
+                          color: facilityColors[key],
+                        });
+                      }}
+                      onMouseLeave={() => setHovered(null)}
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -180,21 +354,6 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* ---- per-facility pies ---- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Per-facility today</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {per_facility.length === 0 ? (
-            <EmptyHint label="Add a facility to see per-facility breakdown." />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {per_facility.map((f) => <FacilityPie key={f.id} facility={f} />)}
-            </div>
-          )}
-        </CardContent>
-      </Card>
       </>)}  {/* F08 - end overview tab */}
     </div>
   );
@@ -237,98 +396,19 @@ function KpiTile({ icon, label, value, sub, accent }: {
   );
 }
 
-function FacilityPie({ facility }: { facility: DashboardFacility }) {
-  const open = Math.max(0, facility.today_open_minutes);
-  const booked = Math.max(0, Math.min(facility.today_booked_minutes, open));
-  const free = Math.max(0, open - booked);
-  const pct = open > 0 ? Math.round((booked / open) * 100) : 0;
-
-  // When the facility is closed today (no operating hours), show a neutral
-  // grey ring so the card doesn't look broken.
-  const showEmpty = open === 0;
-  const pieData = showEmpty
-    ? [{ name: 'Closed today', value: 1 }]
-    : [
-        { name: 'Booked', value: booked },
-        { name: 'Free',   value: free },
-      ];
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="min-w-0">
-            <div className="font-semibold truncate" title={facility.name}>{facility.name}</div>
-            <div className="text-xs text-muted-foreground">{facility.type.replace('_', ' ')}</div>
-          </div>
-          {facility.occupied_now ? (
-            <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">
-              occupied
-            </span>
-          ) : (
-            <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">
-              free
-            </span>
-          )}
-        </div>
-
-        <div className="h-[180px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={pieData}
-                dataKey="value"
-                innerRadius={45}
-                outerRadius={70}
-                paddingAngle={2}
-                stroke="none"
-                isAnimationActive={false}
-              >
-                {/* Recharts iterates direct children - do NOT wrap Cells in
-                    a React Fragment (it sees just the Fragment and falls
-                    back to default greys). Render the colors via .map(). */}
-                {showEmpty
-                  ? <Cell key="closed" fill={FREE_GRAY} />
-                  : [OCCUPIED_BLUE, FREE_GREEN].map((c, i) => (
-                      <Cell key={i} fill={c} />
-                    ))}
-              </Pie>
-              {!showEmpty && (
-                <Tooltip
-                  formatter={(v: number, n: string) =>
-                    [fmtMinutes(v), n] as [string, string]
-                  }
-                />
-              )}
-              {!showEmpty && (
-                <Legend
-                  verticalAlign="bottom"
-                  iconType="circle"
-                  iconSize={8}
-                  wrapperStyle={{ fontSize: 12 }}
-                />
-              )}
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        {showEmpty ? (
-          <div className="text-center text-xs text-muted-foreground mt-1">
-            Closed today
-          </div>
-        ) : (
-          <div className="text-center mt-1">
-            <span className="text-2xl font-bold text-brand-navy">{pct}%</span>
-            <span className="text-xs text-muted-foreground ml-2">
-              ({fmtMinutes(booked)} of {fmtMinutes(open)})
-            </span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function EmptyHint({ label }: { label: string }) {
   return <div className="text-center py-6 text-sm text-muted-foreground">{label}</div>;
 }
+
+void NAVY;
+void OCCUPIED_BLUE;
+void NAVY_LIGHT;
+void FREE_GREEN;
+void FREE_GRAY;
+void Cell;
+void Pie;
+void PieChart;
+void Legend;
+
+ieChart;
+void Legend;

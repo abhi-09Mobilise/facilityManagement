@@ -20,7 +20,13 @@ const VALID_TYPES = ['meeting_room','gym','conference_room','desk','swimming_poo
 // F02 - second arg `stage` defaults to 'checkin' (so getOne's chain remains
 // the pre-booking workflow). Pass 'checkout' to load the post-booking chain.
 async function loadChain(facilityId, stage) {
-  const stageVal = stage === 'checkout' ? 'checkout' : 'checkin';
+  // F09 - 'notification' is a third stage for FYI-only recipients; defaults
+  // remain 'checkin' so existing callers stay untouched.
+  const stageVal =
+    stage === 'checkout'     ? 'checkout'
+    : stage === 'notification' ? 'notification'
+    : stage === 'cleanup'      ? 'cleanup'
+    : 'checkin';
   return query(
     'SELECT c.id, c.facility_id, c.stage, c.step_order, c.approver_kind, c.approver_user_id, ' +
     '       u.name AS approver_name, u.lname AS approver_lname, u.username AS approver_username, ' +
@@ -65,8 +71,11 @@ exports.list = asyncHandler(async function (req, res) {
   ))[0].cnt;
 
   const rows = await query(
-    'SELECT f.id, f.tenant_id, f.site_id, f.floor_id, f.name, f.type, f.capacity, ' +
-    '       f.description, f.image_url, f.requires_approval, f.shared_booking, ' +
+    'SELECT f.id, f.tenant_id, f.site_id, f.floor_id, f.name, f.type, f.capacity, f.offline_capacity, ' +
+    '       f.min_advance_minutes, f.max_advance_days, f.max_per_user_per_day, ' +
+    '       f.max_per_user_per_week, f.max_per_user_per_month, ' +
+    '       f.pre_end_notify_minutes, ' +
+    '       f.description, f.image_url, f.layout_json, f.requires_approval, f.shared_booking, ' +
     '       f.facility_approver_user_id, f.public_listed, ' +
     '       f.status, f.created_at, ' +
     '       t.name AS tenant_name, s.name AS site_name, fl.name AS floor_name ' +
@@ -127,15 +136,41 @@ exports.create = asyncHandler(async function (req, res) {
     if (rows.length === 0) return fail(res, 'facility_approver_user_id is not a valid user in this tenant', 422);
   }
 
+  // Sanitise advance-booking rule inputs. Each is optional; null = no rule.
+  // Negative values are coerced to null (treat "-1" the same as blank).
+  function ruleVal(v) {
+    const n = intOrNull(v);
+    if (n === null) return null;
+    return n < 0 ? null : n;
+  }
+  const minAdvMin    = ruleVal(b.min_advance_minutes);
+  const maxAdvDays   = ruleVal(b.max_advance_days);
+  const maxPerDay    = ruleVal(b.max_per_user_per_day);
+  const maxPerWeek   = ruleVal(b.max_per_user_per_week);
+  const maxPerMonth  = ruleVal(b.max_per_user_per_month);
+  // Pre-end cleanup notification lead time (minutes before end_at).
+  // NULL/0 disables the feature for the facility.
+  const preEndMin    = ruleVal(b.pre_end_notify_minutes);
+
   const newId = await withTransaction(async function (conn) {
+    // Clamp offline_capacity to [0, capacity] so we never end up with a
+    // facility whose offline reservation exceeds its total seat count.
+    const capVal     = intOrNull(b.capacity) || 0;
+    const offlineRaw = intOrNull(b.offline_capacity) || 0;
+    const offlineVal = Math.max(0, Math.min(capVal, offlineRaw));
+
     const [r] = await conn.execute(
-      'INSERT INTO `facilities` (tenant_id, site_id, floor_id, name, type, capacity, ' +
-      '       description, image_url, requires_approval, shared_booking, facility_approver_user_id) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO `facilities` (tenant_id, site_id, floor_id, name, type, capacity, offline_capacity, ' +
+      '       min_advance_minutes, max_advance_days, max_per_user_per_day, ' +
+      '       max_per_user_per_week, max_per_user_per_month, pre_end_notify_minutes, ' +
+      '       description, image_url, layout_json, requires_approval, shared_booking, facility_approver_user_id) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         site.row.tenant_id, site.row.id, floorId,
-        b.name, b.type, intOrNull(b.capacity) || 0,
+        b.name, b.type, capVal, offlineVal,
+        minAdvMin, maxAdvDays, maxPerDay, maxPerWeek, maxPerMonth, preEndMin,
         b.description || null, b.image_url || null,
+        b.layout_json ? (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)) : null,
         b.requires_approval ? 1 : 0,
         b.shared_booking ? 1 : 0,
         facilityApproverId,
@@ -193,27 +228,69 @@ exports.update = asyncHandler(async function (req, res) {
   const hasShared = Object.prototype.hasOwnProperty.call(b, 'shared_booking');
   const sharedVal = hasShared ? (b.shared_booking ? 1 : 0) : null;
 
+  // F09 - layout_json. Pass null to "leave alone"; empty string clears it.
+  const hasLayout = Object.prototype.hasOwnProperty.call(b, 'layout_json');
+  const layoutVal = hasLayout
+    ? (b.layout_json == null ? null : (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)))
+    : null;
+
+  // Advance-booking rules: each is nullable INT. Treat key-not-present as
+  // "leave alone"; key-present-with-null-or-empty as "clear" (no limit);
+  // a non-negative number as "set"; negative → clear.
+  function ruleField(key) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) {
+      return { present: false, value: null };
+    }
+    const raw = b[key];
+    if (raw === null || raw === '' || raw === undefined) {
+      return { present: true, value: null };
+    }
+    const n = intOrNull(raw);
+    if (n === null || n < 0) return { present: true, value: null };
+    return { present: true, value: n };
+  }
+  const fMin   = ruleField('min_advance_minutes');
+  const fDays  = ruleField('max_advance_days');
+  const fDay   = ruleField('max_per_user_per_day');
+  const fWeek  = ruleField('max_per_user_per_week');
+  const fMonth = ruleField('max_per_user_per_month');
+  const fPre   = ruleField('pre_end_notify_minutes');
+
   await execute(
     'UPDATE `facilities` SET ' +
     '  name                       = COALESCE(?, name), ' +
     '  type                       = COALESCE(?, type), ' +
     '  floor_id                   = COALESCE(?, floor_id), ' +
     '  capacity                   = COALESCE(?, capacity), ' +
+    '  offline_capacity           = COALESCE(?, offline_capacity), ' +
+    '  min_advance_minutes        = ' + (fMin.present   ? '?' : 'min_advance_minutes')    + ', ' +
+    '  max_advance_days           = ' + (fDays.present  ? '?' : 'max_advance_days')       + ', ' +
+    '  max_per_user_per_day       = ' + (fDay.present   ? '?' : 'max_per_user_per_day')   + ', ' +
+    '  max_per_user_per_week      = ' + (fWeek.present  ? '?' : 'max_per_user_per_week')  + ', ' +
+    '  max_per_user_per_month     = ' + (fMonth.present ? '?' : 'max_per_user_per_month') + ', ' +
+    '  pre_end_notify_minutes     = ' + (fPre.present   ? '?' : 'pre_end_notify_minutes')   + ', ' +
     '  description                = COALESCE(?, description), ' +
     '  image_url                  = COALESCE(?, image_url), ' +
+    '  layout_json                = ' + (hasLayout ? '?' : 'layout_json') + ', ' +
     '  requires_approval          = COALESCE(?, requires_approval), ' +
     '  shared_booking             = COALESCE(?, shared_booking), ' +
     '  facility_approver_user_id  = ' + (hasApprover ? '?' : 'facility_approver_user_id') + ', ' +
     '  status                     = COALESCE(?, status) ' +
     'WHERE id = ?',
-    hasApprover ? [
+    [
       b.name || null, b.type || null, intOrNull(b.floor_id), intOrNull(b.capacity),
+      intOrNull(b.offline_capacity),
+      ...(fMin.present   ? [fMin.value]   : []),
+      ...(fDays.present  ? [fDays.value]  : []),
+      ...(fDay.present   ? [fDay.value]   : []),
+      ...(fWeek.present  ? [fWeek.value]  : []),
+      ...(fMonth.present ? [fMonth.value] : []),
+      ...(fPre.present   ? [fPre.value]   : []),
       b.description || null, b.image_url || null,
-      intOrNull(b.requires_approval), sharedVal, newApprover, intOrNull(b.status), id,
-    ] : [
-      b.name || null, b.type || null, intOrNull(b.floor_id), intOrNull(b.capacity),
-      b.description || null, b.image_url || null,
-      intOrNull(b.requires_approval), sharedVal, intOrNull(b.status), id,
+      ...(hasLayout ? [layoutVal] : []),
+      intOrNull(b.requires_approval), sharedVal,
+      ...(hasApprover ? [newApprover] : []),
+      intOrNull(b.status), id,
     ]
   );
   return ok(res, null, 'Facility updated');
@@ -270,19 +347,35 @@ exports.listHours = asyncHandler(async function (req, res) {
   if (!r.ok) return fail(res, r.msg, r.status);
   const rows = await query(
     'SELECT id, day_of_week, open_time, close_time, slot_minutes ' +
-    '  FROM `facility_operating_hours` WHERE facility_id = ? ORDER BY day_of_week',
+    '  FROM `facility_operating_hours` WHERE facility_id = ? ORDER BY day_of_week, open_time',
     [id]
   );
   return ok(res, rows);
 });
 
-// // Exported for facilityChains module so we don't have to query in two places.
-// exports._loadChain = loadChain;
-// e_time, slot_minutes ' +
-//     '  FROM `facility_operating_hours` WHERE facility_id = ? ORDER BY day_of_week, open_time',
-//     [id]
-//   );
-//   return ok(res, rows);
-// });
-
 exports._loadChain = loadChain;
+
+// F09 - Chair delete guard.
+// GET /api/facilities/:id/chair-bookings?chair_id=C-03
+// Counts active future bookings holding the chair (single or comma-joined
+// desk_id list). Cancelled / rejected / past bookings don't count.
+exports.chairBookings = asyncHandler(async function (req, res) {
+  const id = intOrNull(req.params.id);
+  if (id === null) return fail(res, 'Invalid id', 400);
+  const chairId = String(req.query.chair_id || '').trim();
+  if (!chairId) return fail(res, 'chair_id is required', 422);
+
+  const r = await assertOwnership(req, 'facilities', id);
+  if (!r.ok) return fail(res, r.msg, r.status);
+
+  const rows = await query(
+    'SELECT COUNT(*) AS cnt ' +
+    '  FROM `bookings` ' +
+    ' WHERE facility_id = ? AND trash = 0 ' +
+    "   AND status IN ('pending','approved') " +
+    "   AND end_at > NOW() " +
+    "   AND FIND_IN_SET(?, REPLACE(IFNULL(desk_id, ''), ' ', '')) > 0",
+    [id, chairId]
+  );
+  return ok(res, { count: Number(rows[0]?.cnt || 0), chair_id: chairId });
+});

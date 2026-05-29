@@ -286,22 +286,34 @@ exports.getOne = asyncHandler(async function (req, res) {
 // ---------- approvers (used by chain step picker) ----------------------
 
 exports.approvers = asyncHandler(async function (req, res) {
-  const where = ['trash = 0', 'status = 1', 'is_approver = 1'];
+  // u.* lives behind an alias here so the optional ?site_id= / ?department_id=
+  // filters can sit next to the joined department row.
+  const where = ['u.trash = 0', 'u.status = 1', 'u.is_approver = 1'];
   const params = [];
 
   if (req.user.role === 'super_admin') {
     const tid = intOrNull(req.query.tenant_id);
-    if (tid !== null) { where.push('tenant_id = ?'); params.push(tid); }
+    if (tid !== null) { where.push('u.tenant_id = ?'); params.push(tid); }
   } else {
-    where.push('tenant_id = ?');
+    where.push('u.tenant_id = ?');
     params.push(req.user.tenant_id);
   }
 
+  // Optional cascade filters used by the per-facility chain editor:
+  //   ?site_id= ........ approvers belonging to a department in this site
+  //   ?department_id= .. approvers belonging to one specific department
+  const siteId = intOrNull(req.query.site_id);
+  if (siteId !== null) { where.push('d.site_id = ?'); params.push(siteId); }
+  const deptId = intOrNull(req.query.department_id);
+  if (deptId !== null) { where.push('u.department_id = ?'); params.push(deptId); }
+
   const rows = await query(
-    'SELECT id, username, name, lname, email, designation, role ' +
-    '  FROM `users` ' +
+    'SELECT u.id, u.username, u.name, u.lname, u.email, u.designation, u.role, ' +
+    '       u.department_id, d.name AS department_name ' +
+    '  FROM `users` u ' +
+    '  LEFT JOIN `departments` d ON d.id = u.department_id ' +
     ' WHERE ' + where.join(' AND ') +
-    ' ORDER BY name, lname, username',
+    ' ORDER BY u.name, u.lname, u.username',
     params
   );
   return ok(res, rows);

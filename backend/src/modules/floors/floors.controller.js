@@ -24,7 +24,8 @@ exports.list = asyncHandler(async function (req, res) {
   if (siteId !== null) { where.push('f.site_id = ?'); params.push(siteId); }
 
   const rows = await query(
-    'SELECT f.id, f.tenant_id, f.site_id, f.name, f.level_number, f.status, f.created_at, ' +
+    'SELECT f.id, f.tenant_id, f.site_id, f.name, f.level_number, f.layout_image_url, ' +
+    '       f.status, f.created_at, ' +
     '       t.name AS tenant_name, s.name AS site_name ' +
     '  FROM `floors` f ' +
     '  LEFT JOIN `tenants` t ON t.id = f.tenant_id ' +
@@ -44,9 +45,15 @@ exports.create = asyncHandler(async function (req, res) {
   const site = await assertOwnership(req, 'sites', intOrNull(b.site_id));
   if (!site.ok) return fail(res, site.msg, site.status);
 
+  // Cap the base64 layout image at ~2 MB raw text to stay under MEDIUMTEXT's
+  // 16 MB ceiling and keep the floors.list payload sensible.
+  const layoutImageUrl = (typeof b.layout_image_url === 'string' && b.layout_image_url.length > 0)
+    ? (b.layout_image_url.length > 2 * 1024 * 1024 ? null : b.layout_image_url)
+    : null;
+
   const r = await execute(
-    'INSERT INTO `floors` (tenant_id, site_id, name, level_number) VALUES (?, ?, ?, ?)',
-    [site.row.tenant_id, site.row.id, b.name, intOrNull(b.level_number)]
+    'INSERT INTO `floors` (tenant_id, site_id, name, level_number, layout_image_url) VALUES (?, ?, ?, ?, ?)',
+    [site.row.tenant_id, site.row.id, b.name, intOrNull(b.level_number), layoutImageUrl]
   );
 
   // Notify tenant admins (fire-and-forget).
@@ -80,13 +87,31 @@ exports.update = asyncHandler(async function (req, res) {
   if (!r.ok) return fail(res, r.msg, r.status);
 
   const b = req.body || {};
+  // layout_image_url has three meanings on PATCH:
+  //   - undefined  -> leave unchanged (we don't include the column in UPDATE)
+  //   - empty/null -> clear it (remove the floor's plan)
+  //   - data URL   -> set/replace it (bounded by the same 2 MB cap as create)
+  let setImageClause = '';
+  const params = [b.name || null, intOrNull(b.level_number), intOrNull(b.status)];
+  if (Object.prototype.hasOwnProperty.call(b, 'layout_image_url')) {
+    if (!b.layout_image_url) {
+      setImageClause = ', layout_image_url = NULL';
+    } else if (typeof b.layout_image_url === 'string' && b.layout_image_url.length <= 2 * 1024 * 1024) {
+      setImageClause = ', layout_image_url = ?';
+      params.push(b.layout_image_url);
+    }
+    // (oversized strings are silently dropped — UI rejects this client-side)
+  }
+  params.push(id);
+
   await execute(
     'UPDATE `floors` SET ' +
     '  name         = COALESCE(?, name), ' +
     '  level_number = COALESCE(?, level_number), ' +
     '  status       = COALESCE(?, status) ' +
+    setImageClause + ' ' +
     'WHERE id = ?',
-    [b.name || null, intOrNull(b.level_number), intOrNull(b.status), id]
+    params
   );
   return ok(res, null, 'Floor updated');
 });
