@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Chip, Paper, Stack, TextField } from '@mui/material';
+import { Box, Chip, Paper, Stack } from '@mui/material';
+import SearchInput from '@/components/SearchInput';
 import type { GridColDef } from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
@@ -27,7 +28,6 @@ export default function SitesListPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
 
   const columns: GridColDef<Site>[] = [
-    { field: 'id', headerName: 'ID', width: 80 },
     { field: 'tenant_name', headerName: 'Tenant', width: 180,
       valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 220 },
@@ -46,8 +46,13 @@ export default function SitesListPage() {
         addLabel="New site" onAdd={() => navigate('/admin/sites/new')} />
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stack direction="row" spacing={2}>
-          <TextField label="Search" size="small" sx={{ minWidth: 280 }} value={q}
-            onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+          {/* Debounced — backend now has real LIMIT/OFFSET + ?q= over name/code/address. */}
+          <SearchInput
+            value={q}
+            onChange={(v) => { setQ(v); setPage(1); }}
+            placeholder="Search by name, code or address…"
+            className="min-w-[320px]"
+          />
         </Stack>
       </Paper>
       <CrudTable<Site>

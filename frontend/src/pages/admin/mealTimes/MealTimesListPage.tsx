@@ -22,7 +22,6 @@ export default function MealTimesListPage() {
   useEffect(() => { load(); }, []);
 
   const columns: GridColDef<MealTime>[] = [
-    { field: 'id', headerName: 'ID', width: 80 },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
     { field: 'start_time', headerName: 'Start', width: 120 },
     { field: 'end_time', headerName: 'End', width: 120 },

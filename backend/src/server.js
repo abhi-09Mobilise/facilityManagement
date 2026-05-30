@@ -14,9 +14,31 @@ const checkoutSweeper = require('./jobs/checkoutSweeper'); // F02
 
 const app = express();
 
+// CORS — accepts a comma-separated list in CORS_ORIGIN, or '*' for open.
+// Each entry is matched literally against the request Origin header. We also
+// log declined origins once so an operator can spot a typo'd domain in .env.
+const corsList = (config.corsOrigin === '*' ? null : config.corsOrigin
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean));
+const corsSeen = new Set(); // for one-line logging of unknown origins
 app.use(cors({
-  origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(','),
+  origin: function corsOriginFn(origin, cb) {
+    // Non-browser callers (curl, server-to-server, healthchecks) send no
+    // Origin header — allow through so /api/health and cron endpoints work.
+    if (!origin) return cb(null, true);
+    // Wildcard mode (CORS_ORIGIN=* or unset) — allow any origin.
+    if (corsList === null) return cb(null, true);
+    if (corsList.includes(origin)) return cb(null, true);
+    if (!corsSeen.has(origin)) {
+      corsSeen.add(origin);
+      console.warn('[cors] declined origin: ' + origin + '  (allowed: ' + corsList.join(', ') + ')');
+    }
+    return cb(new Error('CORS: origin ' + origin + ' not allowed'));
+  },
   credentials: true,
+  // Some browsers don't send 200 on preflight unless we say so.
+  optionsSuccessStatus: 204,
 }));
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));

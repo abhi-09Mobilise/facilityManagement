@@ -8,6 +8,14 @@ const mailer = require('../../utils/mailer');
 const { tenantAdminEmails, tenantName } = require('../../utils/mailRecipients');
 
 exports.list = asyncHandler(async function (req, res) {
+  // Real pagination + bounded LIMIT — the old version returned ALL sites
+  // regardless of the caller's ?limit= (the list page set limit=20 but
+  // got back every row). With 5-10 sites/tenant it didn't bite; once we
+  // grow past that or super_admin views cross-tenant, it would.
+  const limit  = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
+  const page   = Math.max(1, parseInt(req.query.page  || '1', 10));
+  const offset = (page - 1) * limit;
+
   const where = ['s.trash = 0'];
   const params = [];
 
@@ -19,10 +27,12 @@ exports.list = asyncHandler(async function (req, res) {
     params.push(req.user.tenant_id);
   }
 
-  if (req.query.q) {
-    where.push('(s.name LIKE ? OR s.code LIKE ?)');
-    const like = '%' + req.query.q + '%';
-    params.push(like, like);
+  // Free-text search across name, code, address. LIKE wildcards escaped.
+  const qRaw = String(req.query.q || '').trim();
+  if (qRaw) {
+    const like = '%' + qRaw.replace(/[%_]/g, '\\$&') + '%';
+    where.push('(s.name LIKE ? OR s.code LIKE ? OR s.address LIKE ?)');
+    params.push(like, like, like);
   }
   const whereSql = where.join(' AND ');
 
@@ -37,11 +47,11 @@ exports.list = asyncHandler(async function (req, res) {
     '  FROM `sites` s ' +
     '  LEFT JOIN `tenants` t ON t.id = s.tenant_id ' +
     ' WHERE ' + whereSql +
-    ' ORDER BY s.id',
+    ` ORDER BY s.id LIMIT ${limit} OFFSET ${offset}`,
     params
   );
 
-  return ok(res, { data: rows, total: total, current_page: 1, per_page: rows.length });
+  return ok(res, { data: rows, total: total, current_page: page, per_page: limit });
 });
 
 exports.getOne = asyncHandler(async function (req, res) {

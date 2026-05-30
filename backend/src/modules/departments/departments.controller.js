@@ -29,6 +29,16 @@ exports.list = asyncHandler(async function (req, res) {
   const siteId = intOrNull(req.query.site_id);
   if (siteId !== null) { where.push('d.site_id = ?'); params.push(siteId); }
 
+  // Free-text search across name + code. Departments are tiny (5-10 per
+  // tenant) so no LIMIT/OFFSET needed — the SearchInput on the list page
+  // narrows the visible rows even when the array is small.
+  const qRaw = String(req.query.q || '').trim();
+  if (qRaw) {
+    const like = '%' + qRaw.replace(/[%_]/g, '\\$&') + '%';
+    where.push('(d.name LIKE ? OR d.code LIKE ?)');
+    params.push(like, like);
+  }
+
   // ?parent_dept_id= retained for completeness even though the UI no longer
   // surfaces it. Backwards-compatible with any client still using it.
   if (Object.prototype.hasOwnProperty.call(req.query, 'parent_dept_id')) {

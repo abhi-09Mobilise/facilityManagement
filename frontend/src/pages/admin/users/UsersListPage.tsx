@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Chip, Paper, Stack, TextField } from '@mui/material';
+import { Box, Chip, Paper, Stack } from '@mui/material';
+import SearchInput from '@/components/SearchInput';
 import type { GridColDef } from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
@@ -33,26 +34,27 @@ export default function UsersListPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
 
   const columns: GridColDef<User>[] = [
-    { field: 'id', headerName: 'ID', width: 70 },
-    { field: 'username', headerName: 'Username', width: 140 },
+    { field: 'username', headerName: 'Username', width: 110 },
     {
-      field: 'name', headerName: 'Name', flex: 1, minWidth: 180,
+      field: 'name', headerName: 'Name', flex: 1, minWidth: 150,
       valueGetter: (_v, row) => [row.name, row.lname].filter(Boolean).join(' '),
     },
-    { field: 'designation', headerName: 'Designation', width: 160 },
-    { field: 'email', headerName: 'Email', width: 200 },
+    { field: 'designation', headerName: 'Designation', width: 130 },
+    // Email gets flex so it shrinks when the viewport narrows; minWidth
+    // keeps it readable but won't push the actions column off-screen.
+    { field: 'email', headerName: 'Email', flex: 1, minWidth: 160 },
     {
-      field: 'role', headerName: 'Role', width: 130,
+      field: 'role', headerName: 'Role', width: 100,
       renderCell: (p) => <Chip size="small" color={ROLE_COLOR[p.row.role || 'employee']} label={p.row.role} />,
     },
     {
-      field: 'is_approver', headerName: 'Approver', width: 110,
+      field: 'is_approver', headerName: 'Approver', width: 90,
       renderCell: (p) => p.row.is_approver
         ? <Chip size="small" color="warning" label="approver" />
         : <Chip size="small" label="—" variant="outlined" />,
     },
     {
-      field: 'status', headerName: 'Status', width: 110,
+      field: 'status', headerName: 'Status', width: 90,
       renderCell: (p) => <Chip size="small" color={p.row.status ? 'success' : 'default'} label={p.row.status ? 'active' : 'inactive'} />,
     },
   ];
@@ -63,8 +65,14 @@ export default function UsersListPage() {
         addLabel="New employee" onAdd={() => navigate('/users/new')} />
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stack direction="row" spacing={2}>
-          <TextField label="Search" size="small" sx={{ minWidth: 280 }} value={q}
-            onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+          {/* Debounced — only fires the API call 300ms after the admin
+              stops typing, so a 7k-user tenant doesn't get hammered. */}
+          <SearchInput
+            value={q}
+            onChange={(v) => { setQ(v); setPage(1); }}
+            placeholder="Search by name, email, username, designation…"
+            className="min-w-[320px]"
+          />
         </Stack>
       </Paper>
       <CrudTable<User>

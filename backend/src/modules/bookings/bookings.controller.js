@@ -779,10 +779,27 @@ exports.list = asyncHandler(async function (req, res) {
   if (req.query.from_date)   { where.push('b.start_at >= ?');   params.push(req.query.from_date); }
   if (req.query.to_date)     { where.push('b.start_at < ?');    params.push(req.query.to_date); }
 
+  // Free-text search across the columns an admin would type from memory:
+  // booking title, remarks, the facility's name, and the booker's name /
+  // username. LIKE wildcards in the user's query string are escaped so
+  // typing "50%" doesn't blow up the WHERE clause.
+  const qRaw = String(req.query.q || '').trim();
+  if (qRaw) {
+    const like = '%' + qRaw.replace(/[%_]/g, '\\$&') + '%';
+    where.push(
+      '(b.title LIKE ? OR b.remarks LIKE ? OR f.name LIKE ? ' +
+      ' OR u.name LIKE ? OR u.lname LIKE ? OR u.username LIKE ?)'
+    );
+    params.push(like, like, like, like, like, like);
+  }
+
   const whereSql = where.join(' AND ');
 
   const total = (await query(
-    'SELECT COUNT(*) cnt FROM `bookings` b WHERE ' + whereSql,
+    'SELECT COUNT(*) cnt FROM `bookings` b ' +
+    '  LEFT JOIN `facilities` f ON f.id = b.facility_id ' +
+    '  LEFT JOIN `users`      u ON u.id = b.user_id ' +
+    ' WHERE ' + whereSql,
     params
   ))[0].cnt;
 

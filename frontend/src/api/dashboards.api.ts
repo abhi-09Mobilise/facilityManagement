@@ -43,7 +43,7 @@ export interface GanttPayload {
 }
 
 export const dashboardsApi = {
-  tenantAdmin(params: { tenant_id?: number } = {}) {
+  tenantAdmin(params: { tenant_id?: number; site_id?: number; limit?: number } = {}) {
     return api
       .get<ApiEnvelope<DashboardPayload>>('/dashboards/tenant-admin', { params })
       .then((r) => r.data);

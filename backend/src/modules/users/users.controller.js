@@ -55,10 +55,17 @@ exports.list = asyncHandler(async function (req, res) {
     params.push(req.user.tenant_id);
   }
 
-  if (req.query.q) {
-    where.push('(u.username LIKE ? OR u.name LIKE ? OR u.email LIKE ?)');
-    const like = '%' + req.query.q + '%';
-    params.push(like, like, like);
+  // Free-text search: username, full name (name + lname), email, designation.
+  // LIKE wildcards in the user's q are escaped so typing '%' / '_' doesn't
+  // explode the WHERE clause.
+  const qRaw = String(req.query.q || '').trim();
+  if (qRaw) {
+    const like = '%' + qRaw.replace(/[%_]/g, '\\$&') + '%';
+    where.push(
+      '(u.username LIKE ? OR u.name LIKE ? OR u.lname LIKE ? ' +
+      ' OR u.email LIKE ? OR u.designation LIKE ?)'
+    );
+    params.push(like, like, like, like, like);
   }
   // Optional exact-match filters used by pickers (e.g. the Department form
   // wants only users whose designation is 'Manager').

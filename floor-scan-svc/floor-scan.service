@@ -1,0 +1,24 @@
+; systemd unit for the floor-scan FastAPI service.
+; Drop this into /etc/systemd/system/floor-scan.service on the server
+; (replace /var/www/FacilityManagement with your real path + user) then:
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now floor-scan
+;   sudo systemctl status floor-scan
+;   journalctl -u floor-scan -f
+
+[Unit]
+Description=Facility floor-plan scanner (FastAPI + OpenCV)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/FacilityManagement/floor-scan-svc
+EnvironmentFile=/var/www/FacilityManagement/floor-scan-svc/.env
+ExecStart=/var/www/FacilityManagement/floor-scan-svc/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 5001 --workers 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -95,6 +95,9 @@ const ROLE_CHIP_CLASS: Record<Role, string> = {
 const HEADER_H = 64;
 const SIDEBAR_W = 248;
 
+// Global back button shown above every page's children (hidden on role-home routes).
+import BackButton from '@/components/BackButton';
+
 export default function AppLayout({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, logout } = useAuth();
@@ -315,7 +318,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         className="min-w-0 overflow-x-hidden p-3 sm:p-4 md:p-6"
         style={{ paddingTop: HEADER_H + 16 }}
       >
-        <div className="md:ml-[248px]">{children}</div>
+        <div className="md:ml-[248px]"><BackButton />{children}</div>
       </main>
     </div>
   );
