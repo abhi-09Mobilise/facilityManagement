@@ -26,7 +26,6 @@ export default function FloorsListPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [siteId]);
 
   const columns: GridColDef<Floor>[] = [
-    { field: 'id', headerName: 'ID', width: 80 },
     { field: 'tenant_name', headerName: 'Tenant', width: 180,
       valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
     { field: 'site_id', headerName: 'Site', width: 200,

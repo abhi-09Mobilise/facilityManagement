@@ -270,11 +270,19 @@ def _detect(img_bgr: np.ndarray):
 
 app = FastAPI(title="Facility floor-plan scanner", version="1.0.0")
 
-# CORS open — service sits behind the Node backend, not exposed to the
-# internet. If you ever expose this directly to the browser, lock this down.
+# CORS — service is intended to sit behind the Node backend (bind to
+# 127.0.0.1 in prod so the browser can't reach it directly). The env var
+# ALLOWED_ORIGINS lets you open it up if you ever want the browser to hit
+# /scan directly. Comma-separated list, or "*" to allow all (dev default).
+_origins_env = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+if _origins_env == "*" or _origins_env == "":
+    _allowed_origins = ["*"]
+else:
+    _allowed_origins = [s.strip() for s in _origins_env.split(",") if s.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -344,4 +352,4 @@ async def scan(image: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 5001))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("app:app", host=os.environ.get("HOST", "127.0.0.1"), port=port, reload=False)

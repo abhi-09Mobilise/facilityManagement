@@ -31,14 +31,14 @@ export default function TenantsListPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q, status]);
 
   const columns: GridColDef<Tenant>[] = [
-    { field: 'id',   headerName: 'ID', width: 80 },
-    { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
-    { field: 'slug', headerName: 'Slug', width: 140 },
-    { field: 'contact_email', headerName: 'Contact', width: 220 },
-    { field: 'currency_code', headerName: 'Currency', width: 100 },
-    { field: 'timezone', headerName: 'Timezone', width: 160 },
+    { field: 'name', headerName: 'Name', flex: 1, minWidth: 180 },
+    { field: 'slug', headerName: 'Slug', width: 100 },
+    // Contact gets flex so a long email doesn't blow the row width out.
+    { field: 'contact_email', headerName: 'Contact', flex: 1, minWidth: 180 },
+    { field: 'currency_code', headerName: 'Currency', width: 80 },
+    { field: 'timezone', headerName: 'Timezone', width: 130 },
     {
-      field: 'status', headerName: 'Status', width: 120,
+      field: 'status', headerName: 'Status', width: 90,
       renderCell: (p) => {
         const color = p.row.status === 'active' ? 'success' : p.row.status === 'suspended' ? 'error' : 'warning';
         return <Chip size="small" color={color} label={p.row.status} />;

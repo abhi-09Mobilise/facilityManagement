@@ -79,6 +79,13 @@
   * {
     @apply border-border;
   }
+  /* Shrink the root font-size from the browser default (16px) to 14px.
+     Every Tailwind size class (text-sm, p-4, gap-2, max-w-*, h-9, …) is
+     defined in `rem`, so this scales the entire app down ~12% in one
+     line — no component edits needed. Bump to 13px / 15px to taste. */
+  html {
+    font-size: 14px;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: 'rlig' 1, 'calt' 1;

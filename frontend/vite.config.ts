@@ -16,11 +16,11 @@ export default defineConfig({
       // Anything starting with /api gets proxied so the React app
       // can call '/api/...' directly without CORS gymnastics in dev.
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'http://localhost:4002',
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://localhost:4000',
+        target: 'http://localhost:4002',
         changeOrigin: true,
       },
     },

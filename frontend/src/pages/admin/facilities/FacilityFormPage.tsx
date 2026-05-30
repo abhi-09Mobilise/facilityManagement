@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import PageSpinner from '@/components/PageSpinner';
 import {
   Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, IconButton,
   MenuItem, Paper, Stack, Switch, TextField, Typography,
@@ -11,6 +12,7 @@ import PhotoCameraOutlinedIcon from '@mui/icons-material/PhotoCameraOutlined';
 import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import { facilitiesApi } from '@/api/facilities.api';
+import { uploadsApi } from '@/api/uploads.api';
 import { sitesApi } from '@/api/sites.api';
 import { floorsApi } from '@/api/floors.api';
 import { usersApi } from '@/api/users.api';
@@ -24,7 +26,9 @@ import type {
 import { findSlotOverlap } from './components/SlotCapacitiesEditor';
 import FacilityPantriesPicker from './components/FacilityPantriesPicker';
 import ApprovalChainEditor from './components/ApprovalChainEditor';
-import DeskLayoutEditor from './components/DeskLayoutEditor';
+// Lazy — 1479-line canvas component, only ships when the admin opens a
+// desk/meeting-room facility's layout editor.
+const DeskLayoutEditor = lazy(() => import('./components/DeskLayoutEditor'));
 
 const TYPES: { value: FacilityType; label: string }[] = [
   { value: 'meeting_room',   label: 'Meeting room' },
@@ -97,26 +101,36 @@ export default function FacilityFormPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Cover image upload (the facility's hero photo, shown on the booker's
-  // bento card). Stored as a base64 data URL on facilities.image_url so we
-  // don't need a separate upload endpoint. Same pattern as the floor-plan
-  // image inside layout_json.
+  // Cover image upload (the facility's hero photo on the booker's bento
+  // card). Now uploaded to Azure Blob via /api/uploads/image; the returned
+  // absolute URL is what we store on facilities.image_url. No more base64
+  // data URLs bloating the row.
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const [imageUploading, setImageUploading] = useState(false);
+  async function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1.5 * 1024 * 1024) {
-      alert('Image is bigger than 1.5 MB — please compress it first.');
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Image is bigger than 10 MB — please compress it first.');
       e.target.value = '';
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setForm((f) => ({ ...f, image_url: String(reader.result || '') }));
-    };
-    reader.readAsDataURL(file);
-    // Reset the input so re-selecting the same file still fires onChange.
-    e.target.value = '';
+    setImageUploading(true);
+    try {
+      const r = await uploadsApi.image(file, 'facility-images');
+      if (!r.status || !r.data) {
+        alert('Upload failed: ' + (r.msg || 'unknown error'));
+        return;
+      }
+      setForm((f) => ({ ...f, image_url: r.data!.url }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert('Upload failed: ' + msg);
+    } finally {
+      setImageUploading(false);
+      // Reset the input so re-selecting the same file still fires onChange.
+      e.target.value = '';
+    }
   }
 
   useEffect(() => {
@@ -463,10 +477,15 @@ export default function FacilityFormPage() {
                   type="button"
                   variant="outlined"
                   size="small"
-                  startIcon={<PhotoCameraOutlinedIcon />}
+                  disabled={imageUploading}
+                  startIcon={imageUploading
+                    ? <CircularProgress size={14} />
+                    : <PhotoCameraOutlinedIcon />}
                   onClick={() => imageInputRef.current?.click()}
                 >
-                  {form.image_url ? 'Replace image' : 'Upload image'}
+                  {imageUploading
+                    ? 'Uploading…'
+                    : (form.image_url ? 'Replace image' : 'Upload image')}
                 </Button>
                 {form.image_url && (
                   <Button
@@ -487,6 +506,34 @@ export default function FacilityFormPage() {
                 </Typography>
               </Stack>
             </Stack>
+
+            {/* --------- F09: Floor-plan canvas (desk facilities only) --------- */}
+            {hasLayoutCanvas && (
+              <Box>
+                <Suspense fallback={<PageSpinner label="Loading layout editor…" />}>
+                <DeskLayoutEditor
+                  value={layout}
+                  onChange={(next) => {
+                    setLayout(next);
+                    // Derive capacity from the chair count on every change
+                    // so the read-only Capacity field above stays in sync.
+                    // Also clamp offline_capacity down if the capacity
+                    // dropped below it (admin deleted chairs).
+                    const chairCnt = (next.objects || []).filter((o) => o.type === 'chair').length;
+                    setForm((f) => {
+                      const off = Math.max(0, Math.min(chairCnt, f.offline_capacity || 0));
+                      if (chairCnt === (f.capacity || 0) && off === (f.offline_capacity || 0)) return f;
+                      return { ...f, capacity: chairCnt, offline_capacity: off };
+                    });
+                  }}
+                  capacity={form.capacity || 0}
+                  facilityType={form.type}
+                  floorImageUrl={floorImageUrl}
+                  facilityId={editing ? Number(id) : null}
+                />
+                </Suspense>
+              </Box>
+            )}
 
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} flexWrap="wrap">
               <FormControlLabel control={<Switch checked={!!form.requires_approval} onChange={(e) => setForm({ ...form, requires_approval: e.target.checked ? 1 : 0 })} />} label="Requires approval" />
@@ -577,31 +624,6 @@ export default function FacilityFormPage() {
 
             <Divider />
 
-            {/* --------- F09: Floor-plan canvas (desk facilities only) --------- */}
-            {hasLayoutCanvas && (
-              <Box>
-                <DeskLayoutEditor
-                  value={layout}
-                  onChange={(next) => {
-                    setLayout(next);
-                    // Derive capacity from the chair count on every change
-                    // so the read-only Capacity field above stays in sync.
-                    // Also clamp offline_capacity down if the capacity
-                    // dropped below it (admin deleted chairs).
-                    const chairCnt = (next.objects || []).filter((o) => o.type === 'chair').length;
-                    setForm((f) => {
-                      const off = Math.max(0, Math.min(chairCnt, f.offline_capacity || 0));
-                      if (chairCnt === (f.capacity || 0) && off === (f.offline_capacity || 0)) return f;
-                      return { ...f, capacity: chairCnt, offline_capacity: off };
-                    });
-                  }}
-                  capacity={form.capacity || 0}
-                  facilityType={form.type}
-                  floorImageUrl={floorImageUrl}
-                  facilityId={editing ? Number(id) : null}
-                />
-              </Box>
-            )}
 
             {/* --------- Check-in approval + Check-out notification --------- */}
             {/* Both editors share the same ApprovalChainEditor component so
@@ -889,20 +911,4 @@ export default function FacilityFormPage() {
 
 //             <Box>
 //               <FacilityPantriesPicker
-//                 value={pantryIds}
-//                 onChange={setPantryIds}
-//                 siteId={form.site_id}
-//               />
-//             </Box>
-
-//             {error && <Alert severity="error">{error}</Alert>}
-//             <Stack direction="row" justifyContent="flex-end" spacing={1}>
-//               <Button onClick={() => navigate('/admin/facilities')}>Cancel</Button>
-//               <Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
-//             </Stack>
-//           </Stack>
-//         </form>
-//       </Paper>
-//     </Box>
-//   );
-// }
+//     

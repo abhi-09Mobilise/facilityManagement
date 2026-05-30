@@ -41,11 +41,15 @@ export default function CrudTable<T extends Record<string, any>>({
     const actionsCol: GridColDef<T> = {
       field: '__actions',
       headerName: '',
-      width: 110,
+      // Slim — just two icon buttons. Was 110px which pushed the column off
+      // screen on standard 1280-wide viewports once the sidebar was open.
+      width: 88,
+      minWidth: 88,
       sortable: false,
       filterable: false,
       align: 'right',
       headerAlign: 'right',
+      disableColumnMenu: true,
       renderCell: (p) => (
         <Box>
           {onEdit && (

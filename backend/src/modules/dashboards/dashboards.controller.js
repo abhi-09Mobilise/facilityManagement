@@ -25,22 +25,35 @@ function emptyPayload() {
 }
 
 exports.tenantAdmin = asyncHandler(async function (req, res) {
-  // Build a tenant filter that's empty when a super_admin asks for the
-  // global aggregate (no ?tenant_id=). Everyone else stays pinned to
-  // their own tenant.
+  // Scope filters.
+  //   - super_admin: REQUIRES ?tenant_id= now. Returning every tenant's
+  //     facilities at once froze the browser on tenants with 1000+ rows;
+  //     the frontend always sends a tenant_id once one is picked.
+  //   - tenant_admin: pinned to their own tenant. Optional ?site_id= to
+  //     narrow further (one site at a time vs every facility everywhere).
+  //   - Hard LIMIT on per-facility rows so a misconfigured filter never
+  //     pulls 1000+ rows into the payload.
+  const FACILITY_LIMIT = Math.min(parseInt(req.query.limit, 10) || 100, 200);
   let tenantClause = '';
   const tenantParams = [];
   if (req.user.role === 'super_admin') {
     const tid = intOrNull(req.query.tenant_id);
-    if (tid !== null) {
-      tenantClause = ' AND f.tenant_id = ? ';
-      tenantParams.push(tid);
+    if (tid === null) {
+      // No tenant picked yet — render the picker without flashing data.
+      return ok(res, emptyPayload());
     }
-    // tid===null -> NO clause: aggregates across every tenant.
+    tenantClause = ' AND f.tenant_id = ? ';
+    tenantParams.push(tid);
   } else {
     if (!req.user.tenant_id) return ok(res, emptyPayload());
     tenantClause = ' AND f.tenant_id = ? ';
     tenantParams.push(req.user.tenant_id);
+  }
+
+  const siteId = intOrNull(req.query.site_id);
+  if (siteId !== null) {
+    tenantClause += ' AND f.site_id = ? ';
+    tenantParams.push(siteId);
   }
 
   // -- per-facility today_open_minutes from operating hours --
@@ -53,44 +66,47 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     '    ON oh.facility_id = f.id AND oh.day_of_week = DAYOFWEEK(CURDATE()) - 1 ' +
     ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
     ' GROUP BY f.id, f.name, f.type, f.capacity ' +
-    ' ORDER BY f.name',
+    ' ORDER BY f.name ' +
+    ' LIMIT ' + FACILITY_LIMIT,
     tenantParams
   );
 
   if (openRows.length === 0) return ok(res, emptyPayload());
 
-  // -- per-facility today_booked_minutes (intersect bookings with today) --
-  // Cancelled + rejected bookings are excluded; pending is included because
-  // those slots are still effectively reserved.
+  // Constrain booking subqueries to ONLY the facilities we already
+  // selected — keeps joins narrow when the tenant has 1000+ facilities
+  // total but we're viewing one site of 30.
+  const facIds = openRows.map((r) => r.id);
+  const facPlaceholders = facIds.map(() => '?').join(',');
+
+  // -- per-facility today_booked_minutes --
   const bookedRows = await query(
-    'SELECT f.id, ' +
+    'SELECT b.facility_id AS id, ' +
     '       COALESCE(SUM(' +
     '         TIMESTAMPDIFF(MINUTE, ' +
     '           GREATEST(b.start_at, CONCAT(CURDATE(), \' 00:00:00\')), ' +
     '           LEAST(b.end_at, CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), \' 00:00:00\')) ' +
     '         )' +
     '       ), 0) AS today_booked_minutes ' +
-    '  FROM `facilities` f ' +
-    '  LEFT JOIN `bookings` b ON b.facility_id = f.id ' +
-    "        AND b.trash = 0 " +
-    "        AND b.status IN ('approved', 'pending', 'completed') " +
-    "        AND b.start_at < CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' 00:00:00') " +
-    "        AND b.end_at   > CONCAT(CURDATE(), ' 00:00:00') " +
-    ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
-    ' GROUP BY f.id',
-    tenantParams
+    '  FROM `bookings` b ' +
+    ' WHERE b.facility_id IN (' + facPlaceholders + ') ' +
+    "   AND b.trash = 0 " +
+    "   AND b.status IN ('approved', 'pending', 'completed') " +
+    "   AND b.start_at < CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' 00:00:00') " +
+    "   AND b.end_at   > CONCAT(CURDATE(), ' 00:00:00') " +
+    ' GROUP BY b.facility_id',
+    facIds
   );
 
   // -- which facilities are occupied right now? --
   const occupiedRows = await query(
-    'SELECT DISTINCT f.id ' +
-    '  FROM `facilities` f ' +
-    '  INNER JOIN `bookings` b ON b.facility_id = f.id ' +
-    '  WHERE f.trash = 0 AND f.status = 1 ' + tenantClause +
-    "    AND b.trash = 0 " +
-    "    AND b.status IN ('approved', 'pending', 'completed') " +
-    "    AND b.start_at <= NOW() AND b.end_at > NOW()",
-    tenantParams
+    'SELECT DISTINCT b.facility_id AS id ' +
+    '  FROM `bookings` b ' +
+    ' WHERE b.facility_id IN (' + facPlaceholders + ') ' +
+    "   AND b.trash = 0 " +
+    "   AND b.status IN ('approved', 'pending', 'completed') " +
+    '   AND b.start_at <= NOW() AND b.end_at > NOW()',
+    facIds
   );
 
   const bookedByFacility = new Map();

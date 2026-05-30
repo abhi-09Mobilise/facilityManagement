@@ -27,8 +27,12 @@ module.exports = function errorHandler(err, req, res, next) { // eslint-disable-
     ? (err.message || 'Server error')
     : 'Server error';
 
-  // Surface server errors in dev logs.
-  if (process.env.NODE_ENV !== 'production') {
+  // Surface server errors to the logs in EVERY env so production crashes
+  // don't disappear silently. The response body is still scrubbed above
+  // when NODE_ENV=production, so nothing internal leaks to the caller.
+  if (status >= 500) {
+    console.error('[error]', req.method, req.originalUrl, '-', err && (err.stack || err.message || err));
+  } else if (process.env.NODE_ENV !== 'production') {
     console.error('[error]', err);
   }
   return res.status(status).json({ status: false, msg });

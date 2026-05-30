@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
+import SearchInput from '@/components/SearchInput';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -112,22 +113,19 @@ export default function FacilitiesListPage() {
   }
 
   const columns: GridColDef<Facility>[] = [
-    { field: 'id', headerName: 'ID', width: 80 },
-    { field: 'tenant_name', headerName: 'Tenant', width: 180,
-      valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
-    { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
-    { field: 'type', headerName: 'Type', width: 140 },
-    { field: 'site_name', headerName: 'Site', width: 180 },
-    { field: 'floor_name', headerName: 'Floor', width: 160 },
-    { field: 'capacity', headerName: 'Capacity', width: 100, align: 'right', headerAlign: 'right' },
+    { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
+    { field: 'type', headerName: 'Type', width: 120 },
+    { field: 'site_name', headerName: 'Site', width: 130 },
+    { field: 'floor_name', headerName: 'Floor', width: 120 },
+    { field: 'capacity', headerName: 'Capacity', width: 80, align: 'right', headerAlign: 'right' },
     {
-      field: 'requires_approval', headerName: 'Approval', width: 110,
+      field: 'requires_approval', headerName: 'Approval', width: 100,
       renderCell: (p) => p.row.requires_approval
         ? <Chip size="small" color="warning" label="required" />
         : <Chip size="small" label="auto" />,
     },
     {
-      field: 'status', headerName: 'Status', width: 110,
+      field: 'status', headerName: 'Status', width: 90,
       renderCell: (p) => <Chip size="small" color={p.row.status ? 'success' : 'default'} label={p.row.status ? 'active' : 'inactive'} />,
     },
   ];
@@ -227,10 +225,11 @@ export default function FacilitiesListPage() {
             spacing={2}
             sx={{ pt: 0.5 }}
           >
-            <TextField
-              size="small" label="Search by name" sx={{ minWidth: 240 }}
+            <SearchInput
               value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1); }}
+              onChange={(v) => { setQ(v); setPage(1); }}
+              placeholder="Search by name…"
+              className="min-w-[240px]"
             />
             <TextField
               select size="small" label="Site" sx={{ minWidth: 220 }}

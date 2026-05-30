@@ -25,6 +25,9 @@ router.use('/approvals', require('../modules/approvals/approvals.routes'));
 // Floor-plan auto-detection (admin only; proxies to Python microservice)
 router.use('/floor-scan', require('../modules/floorScan/floorScan.routes'));
 
+// Image uploads (admin only; proxies to Azure Blob sidecar)
+router.use('/uploads', require('../modules/uploads/uploads.routes'));
+
 // Cron-driven side jobs (gated by CRON_SECRET, no user auth)
 router.use('/cron', require('../modules/cron/cron.routes'));
 

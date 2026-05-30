@@ -12,6 +12,9 @@ export interface BookingListFilters {
   from_date?: string;
   to_date?: string;
   tenant_id?: number;
+  // Server-side search across title, remarks, facility name, booker name/username.
+  // Wire SearchInput (debounced) so the API isn't hit on every keystroke.
+  q?: string;
 }
 
 // /bookings/check now returns capacity-aware fields. `conflict` is preserved

@@ -1,0 +1,22 @@
+; systemd unit for the Azure Blob upload sidecar.
+; Drop into /etc/systemd/system/azure-blob.service then:
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now azure-blob
+;   journalctl -u azure-blob -f
+
+[Unit]
+Description=Facility Booking Azure Blob upload sidecar
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/FacilityManagement/azure-blob-svc
+EnvironmentFile=/var/www/FacilityManagement/azure-blob-svc/.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
