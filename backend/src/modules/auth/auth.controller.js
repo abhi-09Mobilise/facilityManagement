@@ -21,6 +21,8 @@ function publicUser(u) {
     role: u.role,
     tenant_id: u.tenant_id,
     tenant_name: u.tenant_name || null,
+    organisation_id: u.organisation_id || null,
+    organisation_name: u.organisation_name || null,
     department_id: u.department_id || null,
   };
 }
@@ -37,11 +39,12 @@ exports.login = asyncHandler(async function (req, res) {
   }
 
   const rows = await query(
-    'SELECT u.id, u.tenant_id, u.department_id, u.username, u.name, u.lname, u.email, u.password, u.role, ' +
+    'SELECT u.id, u.tenant_id, u.organisation_id, u.department_id, u.username, u.name, u.lname, u.email, u.password, u.role, ' +
     '       u.status, u.trash, u.is_approved, u.login_attempts, u.login_clear_datetime, ' +
-    '       t.name AS tenant_name ' +
+    '       t.name AS tenant_name, o.name AS organisation_name ' +
     '  FROM `users` u ' +
     '  LEFT JOIN `tenants` t ON t.id = u.tenant_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = u.organisation_id ' +
     ' WHERE (u.username = ? OR u.email = ?) AND u.trash = 0 ' +
     ' LIMIT 1',
     [username, username]
@@ -114,6 +117,14 @@ exports.register = asyncHandler(async function (req, res) {
   if (tenants.length === 0) return fail(res, 'Unknown tenant', 404);
   const tenantId = tenants[0].id;
 
+  // Attach the new user to the tenant's Default organisation so it satisfies
+  // any org-scoped queries. Every tenant has one (migration 037 backfilled).
+  const defaultOrg = await query(
+    "SELECT id FROM `organisations` WHERE tenant_id = ? AND slug = 'default' AND trash = 0 LIMIT 1",
+    [tenantId]
+  );
+  const defaultOrgId = defaultOrg.length > 0 ? defaultOrg[0].id : null;
+
   const emailParam = body.email || null;
   const dupe = await query(
     'SELECT id FROM `users` ' +
@@ -126,10 +137,10 @@ exports.register = asyncHandler(async function (req, res) {
   const hash = await bcrypt.hash(password, 10);
   const r = await execute(
     'INSERT INTO `users` ' +
-    '   (tenant_id, username, password, name, lname, email, mobile, role, status, is_approved, trash) ' +
-    ' VALUES (?, ?, ?, ?, ?, ?, ?, ' + "'employee', 1, 1, 0)",
+    '   (tenant_id, organisation_id, username, password, name, lname, email, mobile, role, status, is_approved, trash) ' +
+    ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' + "'employee', 1, 1, 0)",
     [
-      tenantId, username, hash,
+      tenantId, defaultOrgId, username, hash,
       body.name || null, body.lname || null,
       emailParam, body.mobile || null,
     ]
@@ -138,6 +149,7 @@ exports.register = asyncHandler(async function (req, res) {
   const newUser = {
     id: r.insertId,
     tenant_id: tenantId,
+    organisation_id: defaultOrgId,
     username: username,
     name: body.name || null,
     lname: body.lname || null,
@@ -152,10 +164,11 @@ exports.register = asyncHandler(async function (req, res) {
 // GET /api/auth/me
 exports.me = asyncHandler(async function (req, res) {
   const rows = await query(
-    'SELECT u.id, u.tenant_id, u.department_id, u.username, u.name, u.lname, u.email, u.mobile, u.role, u.user_img, ' +
-    '       t.name AS tenant_name ' +
+    'SELECT u.id, u.tenant_id, u.organisation_id, u.department_id, u.username, u.name, u.lname, u.email, u.mobile, u.role, u.user_img, ' +
+    '       t.name AS tenant_name, o.name AS organisation_name ' +
     '  FROM `users` u ' +
     '  LEFT JOIN `tenants` t ON t.id = u.tenant_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = u.organisation_id ' +
     ' WHERE u.id = ?',
     [req.user.id]
   );

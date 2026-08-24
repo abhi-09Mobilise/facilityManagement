@@ -8,8 +8,9 @@ router.use(authRequired);
 // Self-service endpoints (any logged-in role) - placed BEFORE the admin gate.
 router.get('/me-summary', ctrl.meSummary);
 
-// Admin-only from here on.
-router.use(requireRole('super_admin', 'tenant_admin'));
+// Admin-only from here on. org_admin can manage their own org's users; the
+// controller enforces the tighter role-assignment matrix for them.
+router.use(requireRole('super_admin', 'tenant_admin', 'org_admin'));
 
 router.get('/approvers', ctrl.approvers);
 router.get('/',          ctrl.list);

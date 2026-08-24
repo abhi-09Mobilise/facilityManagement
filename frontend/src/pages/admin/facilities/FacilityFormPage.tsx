@@ -14,13 +14,15 @@ import PageHeader from '@/components/PageHeader';
 import { facilitiesApi } from '@/api/facilities.api';
 import { uploadsApi } from '@/api/uploads.api';
 import { sitesApi } from '@/api/sites.api';
+import { buildingsApi } from '@/api/buildings.api';
 import { floorsApi } from '@/api/floors.api';
 import { usersApi } from '@/api/users.api';
 import { departmentsApi } from '@/api/departments.api';
+import { useMastersFilterOptional } from '@/contexts/MastersFilterContext';
 import { slotCapacitiesApi, type SlotOverride } from '@/api/slotCapacities.api';
 import { facilityPantriesApi } from '@/api/pantries.api';
 import type {
-  ApproverOption, Department, Facility, FacilityApprovalChainStep, FacilityLayout,
+  ApproverOption, Building, Department, Facility, FacilityApprovalChainStep, FacilityLayout,
   FacilityType, Floor, OperatingHour, Site,
 } from '@/types';
 import { findSlotOverlap } from './components/SlotCapacitiesEditor';
@@ -69,7 +71,15 @@ function parseLayout(raw: unknown): FacilityLayout | null {
 export default function FacilityFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const filter = useMastersFilterOptional();
   const editing = id && id !== 'new';
+  // Building is only used to gate the Floor dropdown (facilities.building_id
+  // isn't persisted — the backend derives it from floor_id). Kept in local
+  // state, not on form.
+  const [buildingId, setBuildingId] = useState<number | ''>('');
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [buildingsLoading, setBuildingsLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const [form, setForm] = useState<Partial<Facility>>({
     type: 'meeting_room', capacity: 0, requires_approval: 0, status: 1,
@@ -134,23 +144,70 @@ export default function FacilityFormPage() {
   }
 
   useEffect(() => {
-    sitesApi.list({ limit: 100 }).then((r) => setSites(r.data?.data || []));
+    sitesApi.list({ limit: 200 }).then((r) => setSites(r.data?.data || []));
   }, []);
 
-  // Floors + departments + approvers all cascade off the chosen Site. When
-  // there's no site yet (a brand new facility), wipe the dependent lists so
-  // the dept dropdown is empty rather than showing tenant-wide noise.
+  // Buildings + departments + approvers cascade off the chosen Site. Floors
+  // now cascade off the chosen Building (one step deeper) — see the next
+  // effect. When there's no site yet, wipe the dependent lists so the dept
+  // dropdown is empty rather than showing tenant-wide noise.
   useEffect(() => {
     if (form.site_id) {
-      floorsApi.list({ site_id: form.site_id }).then((r) => setFloors((r.data as Floor[]) || []));
+      setBuildingsLoading(true);
+      buildingsApi.list({ site_id: form.site_id, limit: 200 })
+        .then((r) => setBuildings(r.data?.data || []))
+        .catch(() => setBuildings([]))
+        .finally(() => setBuildingsLoading(false));
       departmentsApi.list({ site_id: form.site_id }).then((r) => setDepartments((r.data as Department[]) || []));
       usersApi.approvers({ site_id: form.site_id }).then((r) => setApprovers((r.data as ApproverOption[]) || []));
     } else {
-      setFloors([]);
+      setBuildings([]);
       setDepartments([]);
       setApprovers([]);
     }
   }, [form.site_id]);
+
+  // Building → Floor cascade. On CREATE we only load floors once a
+  // building has been picked so the admin can't attach a facility to a
+  // floor from a different building. On EDIT, until we've back-derived
+  // building_id from the loaded floor_id, we fall back to loading every
+  // floor for the site so the derive step below can find it.
+  useEffect(() => {
+    if (buildingId) {
+      floorsApi.list({ building_id: Number(buildingId) }).then((r) => setFloors((r.data as Floor[]) || []));
+    } else if (editing && form.site_id) {
+      floorsApi.list({ site_id: form.site_id }).then((r) => setFloors((r.data as Floor[]) || []));
+    } else {
+      setFloors([]);
+    }
+  }, [buildingId, editing, form.site_id]);
+
+  // Pre-fill site + building + floor from the tabbed Masters shell filter
+  // on CREATE. On EDIT the facility payload already sets floor_id, and we
+  // derive the parent building from the floor once floors have loaded (see
+  // below) so the picker doesn't render blank.
+  useEffect(() => {
+    if (editing) return;
+    setForm((f) => {
+      const next: Partial<Facility> = { ...f };
+      if (filter.siteId && !f.site_id) next.site_id = filter.siteId;
+      if (filter.floorId && !f.floor_id) next.floor_id = filter.floorId;
+      return next;
+    });
+    if (filter.buildingId && !buildingId) setBuildingId(filter.buildingId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, filter.siteId, filter.buildingId, filter.floorId]);
+
+  // On EDIT: once floors have loaded, back-derive the building_id from the
+  // picked floor so the Building dropdown shows the correct parent. This is
+  // needed because facilities.building_id isn't stored on the row.
+  useEffect(() => {
+    if (!editing) return;
+    if (buildingId) return;
+    if (!form.floor_id || floors.length === 0) return;
+    const f = floors.find((x) => x.id === form.floor_id);
+    if (f && f.building_id) setBuildingId(f.building_id);
+  }, [editing, form.floor_id, floors, buildingId]);
 
   useEffect(() => {
     if (!editing) return;
@@ -246,7 +303,14 @@ export default function FacilityFormPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitted(true);
     setError(null);
+
+    // Building isn't in the payload (backend derives it from floor_id), but
+    // we still enforce it in the UI to prevent the admin from skipping the
+    // cascade and picking floors from a stale site.
+    if (!editing && !form.site_id) { setError('Please pick a site.'); return; }
+    if (!editing && !buildingId) { setError('Please pick a building.'); return; }
 
     if (form.requires_approval && chain.length === 0) {
       setError('"Requires approval" is on but the check-in chain is empty. Add at least one step.');
@@ -358,7 +422,7 @@ export default function FacilityFormPage() {
       await slotCapacitiesApi.replace(facId, slotOverrides);
       await facilityPantriesApi.replace(facId, pantryIds);
 
-      navigate('/admin/facilities');
+      navigate('/admin/masters/facilities');
     } catch (err: unknown) {
       setError((err as { response?: { data?: { msg?: string } } })?.response?.data?.msg
         || (err as Error)?.message
@@ -390,10 +454,52 @@ export default function FacilityFormPage() {
               </TextField>
             </Stack>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-              <TextField select required label="Site" fullWidth value={form.site_id ?? ''} onChange={(e) => setForm({ ...form, site_id: Number(e.target.value), floor_id: undefined })} disabled={!!editing}>
+              <TextField
+                select required label="Site" fullWidth
+                value={form.site_id ?? ''}
+                onChange={(e) => {
+                  // Changing site clears building + floor — both are FK'd
+                  // downstream and would leave dangling pointers otherwise.
+                  setBuildingId('');
+                  setForm({ ...form, site_id: Number(e.target.value), floor_id: undefined });
+                }}
+                disabled={!!editing}
+                error={submitted && !editing && !form.site_id}
+              >
                 {sites.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
               </TextField>
-              <TextField select label="Floor" sx={{ width: 340 }} value={form.floor_id ?? ''} onChange={(e) => setForm({ ...form, floor_id: e.target.value ? Number(e.target.value) : null })}>
+              <TextField
+                select required label="Building" sx={{ width: 260 }}
+                value={buildingId}
+                onChange={(e) => {
+                  const next = e.target.value === '' ? '' : Number(e.target.value);
+                  // Building change wipes the picked floor.
+                  setBuildingId(next);
+                  setForm({ ...form, floor_id: undefined });
+                }}
+                disabled={!!editing || !form.site_id || buildingsLoading}
+                error={submitted && !editing && !buildingId}
+                helperText={
+                  editing
+                    ? undefined
+                    : (!form.site_id
+                        ? 'Pick a site first.'
+                        : (buildingsLoading
+                            ? 'Loading buildings…'
+                            : (buildings.length === 0
+                                ? 'No buildings for this site.'
+                                : undefined)))
+                }
+              >
+                {buildings.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
+              </TextField>
+              <TextField
+                select label="Floor" sx={{ width: 260 }}
+                value={form.floor_id ?? ''}
+                onChange={(e) => setForm({ ...form, floor_id: e.target.value ? Number(e.target.value) : null })}
+                disabled={!editing && !buildingId}
+                helperText={!editing && !buildingId ? 'Pick a building first.' : undefined}
+              >
                 <MenuItem value="">-</MenuItem>
                 {floors.map((f) => <MenuItem key={f.id} value={f.id}>{f.name}</MenuItem>)}
               </TextField>
@@ -431,6 +537,24 @@ export default function FacilityFormPage() {
               />
             </Stack>
             <TextField label="Description" multiline minRows={2} fullWidth value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+
+            {/* Per-facility Terms & Conditions.
+                Shown to the booker on the booking page; they have to tick
+                an "I agree" box before submit. Leave empty to skip the
+                acceptance step entirely (no checkbox shown).
+                Markdown is OK — we render it as plain text/preserved
+                whitespace on the booker side. */}
+            <TextField
+              label="Terms & Conditions"
+              multiline
+              minRows={3}
+              maxRows={10}
+              fullWidth
+              value={form.terms_and_conditions || ''}
+              onChange={(e) => setForm({ ...form, terms_and_conditions: e.target.value })}
+              helperText="Shown to the booker before they confirm. Leave empty to skip."
+              placeholder="e.g. Gym closes at 21:00. Wipe equipment after use. No outside food."
+            />
 
             {/* Cover image upload. Shown as a thumbnail when set, with Replace/
                 Remove actions. Stored as a base64 data URL on
@@ -576,12 +700,16 @@ export default function FacilityFormPage() {
                   label="Max advance (days)"
                   sx={{ width: 200 }}
                   value={form.max_advance_days ?? ''}
+                  // Capped at 60 days. Anything longer is rarely useful for a
+                  // facility booking system and clutters the calendar.
+                  // Math.min applies the cap even on paste (the HTML5 max=
+                  // attribute below only affects the up/down spinners).
                   onChange={(e) => setForm({
                     ...form,
-                    max_advance_days: e.target.value === '' ? null : Math.max(0, Number(e.target.value)),
+                    max_advance_days: e.target.value === '' ? null : Math.min(60, Math.max(0, Number(e.target.value))),
                   })}
-                  inputProps={{ min: 0 }}
-                  helperText="Booker can't pick a date > N days ahead"
+                  inputProps={{ min: 0, max: 60 }}
+                  helperText="Max 60 days. Booker can't pick a date > N days ahead."
                 />
               </Stack>
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mt: 2 }} flexWrap="wrap">
@@ -793,7 +921,7 @@ export default function FacilityFormPage() {
 
             {error && <Alert severity="error">{error}</Alert>}
             <Stack direction="row" justifyContent="flex-end" spacing={1}>
-              <Button onClick={() => navigate('/admin/facilities')}>Cancel</Button>
+              <Button onClick={() => navigate('/admin/masters/facilities')}>Cancel</Button>
               <Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
             </Stack>
           </Stack>
@@ -863,7 +991,7 @@ export default function FacilityFormPage() {
 
 //             {error && <Alert severity="error">{error}</Alert>}
 //             <Stack direction="row" justifyContent="flex-end" spacing={1}>
-//               <Button onClick={() => navigate('/admin/facilities')}>Cancel</Button>
+//               <Button onClick={() => navigate('/admin/masters/facilities')}>Cancel</Button>
 //               <Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
 //             </Stack>
 //           </Stack>

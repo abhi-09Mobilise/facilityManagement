@@ -4,7 +4,9 @@ import type { ApiEnvelope, ApproverOption, CreateUserPayload, Paginated, Role, U
 // Backend exposes the body-driven update/delete pattern on /users (not /:id).
 export const usersApi = {
   list(params: {
-    page?: number; limit?: number; q?: string; tenant_id?: number;
+    page?: number; limit?: number; q?: string;
+    tenant_id?: number;
+    organisation_id?: number;
     // Optional exact-match filters supported by the backend (since the
     // designation/role columns are denormalised onto users):
     designation?: string;

@@ -12,13 +12,13 @@ router.get('/:id',       ctrl.getOne);
 router.get('/:id/hours', ctrl.listHours);
 // F09 - chair delete guard: counts active future bookings that hold a
 // given chair id so the admin editor can warn before deleting it.
-router.get('/:id/chair-bookings', requireRole('super_admin', 'tenant_admin'), ctrl.chairBookings);
+router.get('/:id/chair-bookings', requireRole('super_admin', 'tenant_admin', 'org_admin'), ctrl.chairBookings);
 
 // Writes - admins only.
-router.post('/',         requireRole('super_admin', 'tenant_admin'), ctrl.create);
-router.put('/:id',       requireRole('super_admin', 'tenant_admin'), ctrl.update);
-router.delete('/:id',    requireRole('super_admin', 'tenant_admin'), ctrl.remove);
-router.put('/:id/hours', requireRole('super_admin', 'tenant_admin'), ctrl.replaceHours);
+router.post('/',         requireRole('super_admin', 'tenant_admin', 'org_admin'), ctrl.create);
+router.put('/:id',       requireRole('super_admin', 'tenant_admin', 'org_admin'), ctrl.update);
+router.delete('/:id',    requireRole('super_admin', 'tenant_admin', 'org_admin'), ctrl.remove);
+router.put('/:id/hours', requireRole('super_admin', 'tenant_admin', 'org_admin'), ctrl.replaceHours);
 
 // Nested approval chain (GET open to any logged-in user, PUT admin-only).
 router.use('/:id/chain', chainRouter);

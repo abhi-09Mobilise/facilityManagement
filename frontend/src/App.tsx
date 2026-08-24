@@ -16,7 +16,7 @@
 //   - FacilityFormPage lazy-loads <DeskLayoutEditor> when the admin opens
 //     the layout modal. (1479-line canvas component held back until used.)
 
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -60,12 +60,20 @@ const TenantFormPage      = lazy(() => import('@/pages/admin/tenants/TenantFormP
 const LookupsPage         = lazy(() => import('@/pages/admin/lookups/LookupsPage'));
 
 // --- Lazy: tenant-admin masters (all use @mui/x-data-grid ~80KB gz) -----
+const OrganisationsListPage = lazy(() => import('@/pages/admin/organisations/OrganisationsListPage'));
+const OrganisationFormPage  = lazy(() => import('@/pages/admin/organisations/OrganisationFormPage'));
 const SitesListPage       = lazy(() => import('@/pages/admin/sites/SitesListPage'));
 const SiteFormPage        = lazy(() => import('@/pages/admin/sites/SiteFormPage'));
 const FloorsListPage      = lazy(() => import('@/pages/admin/floors/FloorsListPage'));
 const FloorFormPage       = lazy(() => import('@/pages/admin/floors/FloorFormPage'));
 const FacilitiesListPage  = lazy(() => import('@/pages/admin/facilities/FacilitiesListPage'));
 const FacilityFormPage    = lazy(() => import('@/pages/admin/facilities/FacilityFormPage'));
+
+// --- Lazy: Masters tabbed shell (Phase B) + new Buildings pages ----------
+const MastersLayout      = lazy(() => import('@/pages/admin/masters/MastersLayout'));
+const BuildingsListPage  = lazy(() => import('@/pages/admin/masters/buildings/BuildingsListPage'));
+const BuildingFormPage   = lazy(() => import('@/pages/admin/masters/buildings/BuildingFormPage'));
+const Floor3DPage        = lazy(() => import('@/pages/admin/floor3d/Floor3DPage'));
 const DepartmentsListPage = lazy(() => import('@/pages/admin/departments/DepartmentsListPage'));
 const DepartmentFormPage  = lazy(() => import('@/pages/admin/departments/DepartmentFormPage'));
 const MealTimesListPage   = lazy(() => import('@/pages/admin/mealTimes/MealTimesListPage'));
@@ -75,6 +83,15 @@ const UserCreatePage      = lazy(() => import('@/pages/users/UserCreatePage'));
 const UserEditPage        = lazy(() => import('@/pages/users/UserEditPage'));
 const PantriesListPage    = lazy(() => import('@/pages/admin/pantries/PantriesListPage'));
 const PantryFormPage      = lazy(() => import('@/pages/admin/pantries/PantryFormPage'));
+
+// Bounces legacy /admin/<segment>[/rest] URLs to the /admin/masters/<segment>
+// tree. Kept as a splat route ("/admin/sites/*" etc.) so old bookmarks that
+// point at /admin/sites/new or /admin/sites/42 keep working.
+function RedirectToMasters({ segment }: { segment: string }) {
+  const location = useLocation();
+  const suffix = location.pathname.replace(new RegExp('^/admin/' + segment), '');
+  return <Navigate to={'/admin/masters/' + segment + suffix + location.search + location.hash} replace />;
+}
 
 // Role-aware default route - sends each role to its natural home.
 function RoleHomeRedirect() {
@@ -94,13 +111,14 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        {/* Single outer Suspense — every lazy() page falls back to PageSpinner
-            while its chunk downloads. One boundary is enough; nested lazies
-            (GanttTimeline, DeskLayoutEditor) have their own local Suspense
-            inside the page so the rest of the page stays visible. */}
+        {/* Suspense here catches lazy chunks for PUBLIC pages (login, register,
+            portal). The AUTHENTICATED tree has its OWN inner Suspense scoped
+            to just <Outlet /> inside AppLayout — that way, navigating between
+            admin pages spins ONLY the main content area; navbar + sidebar
+            stay mounted so it feels like a proper SPA instead of a page reload. */}
         <Suspense fallback={<PageSpinner />}>
           <Routes>
-            {/* Public */}
+            {/* Public — no layout */}
             <Route path="/login"           element={<LoginPage />} />
             <Route path="/register"        element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -112,94 +130,124 @@ export default function App() {
             <Route path="/p/:slug/sites/:siteId/facilities"         element={<PublicSiteFacilitiesPage />} />
             <Route path="/p/:slug/facilities/:id"                   element={<PublicFacilityDetailPage />} />
 
-            {/* Everything else is protected */}
+            {/*
+              Layout route: <ProtectedRoute> checks auth, <AppLayout /> renders
+              navbar + sidebar + <Outlet />. Every child <Route> below renders
+              INTO that outlet — the layout itself never remounts on nav.
+            */}
             <Route
-              path="/*"
               element={
                 <ProtectedRoute>
-                  <AppLayout>
-                    <Routes>
-                      <Route path="/" element={<RoleHomeRedirect />} />
-
-                      {/* Admin dashboards */}
-                      <Route path="/dashboard" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><DashboardPage /></RequireRole>
-                      } />
-
-                      {/* Employee + admins */}
-                      <Route path="/facility"            element={<FacilityBookingPage />} />
-                      <Route path="/facility/type/:type" element={<FacilityDetailPage />} />
-                      <Route path="/my-bookings"         element={<MyBookingsPage />} />
-                      <Route path="/approvals"           element={<ApprovalsInboxPage />} />
-                      <Route path="/approvals/act"       element={<ApprovalActPage />} />
-                      {/* F07 - reschedule / cancel via mail (booker landing) */}
-                      <Route path="/bookings/:id/act"    element={<BookingActPage />} />
-
-                      {/* Super-admin only */}
-                      <Route path="/admin/tenants" element={
-                        <RequireRole roles={['super_admin']}><TenantsListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/tenants/:id" element={
-                        <RequireRole roles={['super_admin']}><TenantFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/lookups" element={
-                        <RequireRole roles={['super_admin']}><LookupsPage /></RequireRole>
-                      } />
-
-                      {/* Super-admin + tenant-admin */}
-                      <Route path="/admin/sites" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><SitesListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/sites/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><SiteFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/floors" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><FloorsListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/floors/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><FloorFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/facilities" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><FacilitiesListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/facilities/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><FacilityFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/departments" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentsListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/departments/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/meal-times" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><MealTimesListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/meal-times/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><MealTimeFormPage /></RequireRole>
-                      } />
-                      {/* F06 - Pantries */}
-                      <Route path="/admin/pantries" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><PantriesListPage /></RequireRole>
-                      } />
-                      <Route path="/admin/pantries/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><PantryFormPage /></RequireRole>
-                      } />
-                      <Route path="/admin/users" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><UsersListPage /></RequireRole>
-                      } />
-                      <Route path="/users/new" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><UserCreatePage /></RequireRole>
-                      } />
-                      <Route path="/admin/users/:id" element={
-                        <RequireRole roles={['super_admin', 'tenant_admin']}><UserEditPage /></RequireRole>
-                      } />
-
-                      <Route path="*" element={<Navigate to="/" replace />} />
-                    </Routes>
-                  </AppLayout>
+                  <AppLayout />
                 </ProtectedRoute>
               }
-            />
+            >
+              <Route index element={<RoleHomeRedirect />} />
+
+              {/* Admin dashboards */}
+              <Route path="/dashboard" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><DashboardPage /></RequireRole>
+              } />
+
+              {/* Employee + admins */}
+              <Route path="/facility"            element={<FacilityBookingPage />} />
+              <Route path="/facility/type/:type" element={<FacilityDetailPage />} />
+              <Route path="/my-bookings"         element={<MyBookingsPage />} />
+              <Route path="/approvals"           element={<ApprovalsInboxPage />} />
+              <Route path="/approvals/act"       element={<ApprovalActPage />} />
+              {/* F07 - reschedule / cancel via mail (booker landing) */}
+              <Route path="/bookings/:id/act"    element={<BookingActPage />} />
+
+              {/* Super-admin only */}
+              <Route path="/admin/tenants" element={
+                <RequireRole roles={['super_admin']}><TenantsListPage /></RequireRole>
+              } />
+              <Route path="/admin/tenants/:id" element={
+                <RequireRole roles={['super_admin']}><TenantFormPage /></RequireRole>
+              } />
+              <Route path="/admin/lookups" element={
+                <RequireRole roles={['super_admin']}><LookupsPage /></RequireRole>
+              } />
+
+              {/* 3D Floor Studio — dedicated three.js canvas page. */}
+              <Route path="/admin/floor-3d" element={
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><Floor3DPage /></RequireRole>
+              } />
+
+              {/* Legacy hierarchy URLs — bounce to the /admin/masters/* shell.
+                  Splat matcher covers list ("/admin/sites"), form new
+                  ("/admin/sites/new") and edit ("/admin/sites/42"). */}
+              <Route path="/admin/organisations/*" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="organisations" /></RequireRole>
+              } />
+              <Route path="/admin/sites/*" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="sites" /></RequireRole>
+              } />
+              <Route path="/admin/floors/*" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="floors" /></RequireRole>
+              } />
+              <Route path="/admin/facilities/*" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="facilities" /></RequireRole>
+              } />
+              <Route path="/admin/buildings/*" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="buildings" /></RequireRole>
+              } />
+              <Route path="/admin/departments" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentsListPage /></RequireRole>
+              } />
+              <Route path="/admin/departments/:id" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentFormPage /></RequireRole>
+              } />
+              <Route path="/admin/meal-times" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><MealTimesListPage /></RequireRole>
+              } />
+              <Route path="/admin/meal-times/:id" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><MealTimeFormPage /></RequireRole>
+              } />
+              {/* F06 - Pantries */}
+              <Route path="/admin/pantries" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><PantriesListPage /></RequireRole>
+              } />
+              <Route path="/admin/pantries/:id" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><PantryFormPage /></RequireRole>
+              } />
+              {/* -------- Masters tabbed shell (Phase B) --------
+                  Shared MastersLayout wraps every /admin/masters/* child so
+                  the tab strip + cascade filter stays above the outlet even
+                  on form pages. Legacy /admin/<segment> routes are kept
+                  intact below for deep-link compatibility. */}
+              <Route
+                element={
+                  <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}>
+                    <MastersLayout />
+                  </RequireRole>
+                }
+              >
+                <Route path="/admin/masters"                     element={<Navigate to="/admin/masters/sites" replace />} />
+                <Route path="/admin/masters/organisations"       element={<OrganisationsListPage />} />
+                <Route path="/admin/masters/organisations/:id"   element={<OrganisationFormPage />} />
+                <Route path="/admin/masters/sites"               element={<SitesListPage />} />
+                <Route path="/admin/masters/sites/:id"           element={<SiteFormPage />} />
+                <Route path="/admin/masters/buildings"           element={<BuildingsListPage />} />
+                <Route path="/admin/masters/buildings/:id"       element={<BuildingFormPage />} />
+                <Route path="/admin/masters/floors"              element={<FloorsListPage />} />
+                <Route path="/admin/masters/floors/:id"          element={<FloorFormPage />} />
+                <Route path="/admin/masters/facilities"          element={<FacilitiesListPage />} />
+                <Route path="/admin/masters/facilities/:id"      element={<FacilityFormPage />} />
+              </Route>
+
+              <Route path="/admin/users" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><UsersListPage /></RequireRole>
+              } />
+              <Route path="/users/new" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><UserCreatePage /></RequireRole>
+              } />
+              <Route path="/admin/users/:id" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><UserEditPage /></RequireRole>
+              } />
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
           </Routes>
         </Suspense>
       </AuthProvider>

@@ -360,6 +360,11 @@ exports.create = asyncHandler(async function (req, res) {
   if (b.repeat_type && !VALID_REPEAT.includes(b.repeat_type)) {
     return fail(res, 'repeat_type must be one of: ' + VALID_REPEAT.join(', '), 422);
   }
+  // Title is required — matches the frontend `required` flag on the booking
+  // form. Server enforces independently so an API client can't bypass.
+  const titleStr = (b.title || '').toString().trim();
+  if (!titleStr) return fail(res, 'Title is required', 422);
+  if (titleStr.length > 180) return fail(res, 'Title is too long (max 180 chars)', 422);
 
   const facility = await loadFacility(facilityId);
   if (!facility || facility.trash) return fail(res, 'Facility not found', 404);
@@ -442,7 +447,7 @@ exports.create = asyncHandler(async function (req, res) {
           // F09 - optional desk id (string from facility.layout_json.desks[].id)
           b.desk_id ? String(b.desk_id) : null,
           booker.id, departmentId,
-          b.title || null, startAt, endAt,
+          titleStr, startAt, endAt,
           b.repeat_type || 'none',
           b.remarks || null,
           b.dont_disturb ? 1 : 0,

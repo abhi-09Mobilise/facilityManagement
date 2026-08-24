@@ -1,7 +1,9 @@
 // Demo seed - super admin + 5 demo tenants with realistic volumes:
 //
 //   5 tenants
+//   1  organisation per tenant ("Default")       =>  5 organisations total
 //   ~7 sites per tenant      (5-10 range)        =>  ~35 sites total
+//   1  building per site      ("Default")        =>  ~35 buildings total
 //   ~12 floors per site      (4-20 range)        =>  ~420 floors total
 //   ~3 facilities per floor  (1-5 range)         =>  ~1260 facilities total
 //   ~8 departments per tenant                    =>  ~40 departments total
@@ -9,6 +11,18 @@
 //   + facility operating hours (5 weekdays / facility) ~6300
 //   + meal_times (3 per tenant)                  =>  15
 //   + ~600 sample bookings spread across tenants
+//
+// Cross-table linkages the seed enforces (matches the FK graph after
+// migrations 036-043):
+//
+//   organisations.tenant_id  = tenant
+//   sites       (tenant_id, organisation_id)
+//   buildings   (tenant_id, organisation_id, site_id)
+//   floors      (tenant_id, site_id, building_id)
+//   departments (tenant_id, organisation_id, site_id)
+//   users       (tenant_id, organisation_id, site_id, department_id)
+//   facilities  (tenant_id, site_id, floor_id)
+//   bookings    (tenant_id, facility_id, user_id, department_id)
 //
 // Total inserted rows: ~16k. Idempotent at the tenant-slug level — if a
 // tenant with the same slug already exists, that whole tenant block is
@@ -193,16 +207,27 @@ async function seedTenant(conn, spec, idx, bulkPwHash) {
   );
   console.log('  [' + spec.slug + '] tenant: id=' + tenantId);
 
-  // 2. Sites — 5–10 per tenant.
+  // 1a. Default organisation — every tenant gets exactly one "Default" org
+  //     so sites / departments / users have somewhere to hang. Post
+  //     migration 038 organisation_id is NOT NULL on sites + departments,
+  //     so this must come BEFORE anything that references it.
+  const organisationId = await insertOne(
+    conn, 'organisations',
+    ['tenant_id', 'name', 'slug', 'status', 'trash'],
+    [tenantId, 'Default', 'default', 1, 0]
+  );
+  console.log('  [' + spec.slug + '] organisation: id=' + organisationId + ' (Default)');
+
+  // 2. Sites — 5–10 per tenant. All attached to the Default org.
   const siteCount = randInt(SITES_PER_TENANT_MIN, SITES_PER_TENANT_MAX);
   const siteIds = [];
   for (let i = 0; i < siteCount; i++) {
     const c = CITIES[(idx * 7 + i) % CITIES.length];
     const sid = await insertOne(
       conn, 'sites',
-      ['tenant_id', 'name', 'code', 'address', 'timezone'],
+      ['tenant_id', 'organisation_id', 'name', 'code', 'address', 'timezone'],
       [
-        tenantId,
+        tenantId, organisationId,
         c.city + ' ' + (i === 0 ? 'HQ' : ('Office ' + (i + 1))),
         c.code + '-' + String(i + 1).padStart(2, '0'),
         'Block ' + (i + 1) + ', ' + c.city + ', ' + c.state,
@@ -213,17 +238,33 @@ async function seedTenant(conn, spec, idx, bulkPwHash) {
   }
   console.log('  [' + spec.slug + '] sites: ' + siteIds.length);
 
-  // 3. Floors — 4–20 per site.
+  // 2a. Default building per site — post-migration 043 floors.building_id
+  //     is NOT NULL, so every site needs at least one building before we
+  //     insert floors under it. Match the "Default" convention used by
+  //     migration 042.
+  const siteBuildingMap = new Map();  // site_id -> building_id
+  for (const sId of siteIds) {
+    const bid = await insertOne(
+      conn, 'buildings',
+      ['tenant_id', 'organisation_id', 'site_id', 'name', 'code', 'status', 'trash'],
+      [tenantId, organisationId, sId, 'Default', 'DEF', 1, 0]
+    );
+    siteBuildingMap.set(sId, bid);
+  }
+  console.log('  [' + spec.slug + '] buildings: ' + siteBuildingMap.size);
+
+  // 3. Floors — 4–20 per site, all under the site's Default building.
   const floorIds = [];
   const floorSiteMap = [];
   for (const sId of siteIds) {
+    const bId = siteBuildingMap.get(sId);
     const fCount = randInt(FLOORS_PER_SITE_MIN, FLOORS_PER_SITE_MAX);
     for (let lv = 0; lv < fCount; lv++) {
       const level = lv + 1;
       const fid = await insertOne(
         conn, 'floors',
-        ['tenant_id', 'site_id', 'name', 'level_number'],
-        [tenantId, sId, 'Block A / Floor ' + level, level]
+        ['tenant_id', 'site_id', 'building_id', 'name', 'level_number'],
+        [tenantId, sId, bId, 'Block A / Floor ' + level, level]
       );
       floorIds.push(fid);
       floorSiteMap.push(sId);
@@ -289,7 +330,9 @@ async function seedTenant(conn, spec, idx, bulkPwHash) {
   }
   console.log('  [' + spec.slug + '] operating_hours: ' + ohCount);
 
-  // 6. Departments — 6–10 per tenant, anchored to first site.
+  // 6. Departments — 6–10 per tenant, anchored to first site. Post
+  //    migration 038 departments.organisation_id is NOT NULL, so it must
+  //    match the site's org (which for this seed is always the Default).
   const deptCount = Math.min(
     randInt(DEPTS_PER_TENANT_MIN, DEPTS_PER_TENANT_MAX),
     DEPARTMENT_BLUEPRINTS.length
@@ -299,22 +342,24 @@ async function seedTenant(conn, spec, idx, bulkPwHash) {
     const d = DEPARTMENT_BLUEPRINTS[di];
     const did = await insertOne(
       conn, 'departments',
-      ['tenant_id', 'site_id', 'name', 'code', 'parent_dept_id', 'manager_user_id'],
-      [tenantId, siteIds[0], d.name, d.code, null, null]
+      ['tenant_id', 'organisation_id', 'site_id', 'name', 'code', 'parent_dept_id', 'manager_user_id'],
+      [tenantId, organisationId, siteIds[0], d.name, d.code, null, null]
     );
     deptIds.push(did);
   }
   console.log('  [' + spec.slug + '] departments: ' + deptIds.length);
 
-  // 7. Tenant admin user — known login.
+  // 7. Tenant admin user — known login. Users.organisation_id is nullable
+  //    (super_admins have none), but for anyone with a tenant we set it
+  //    so per-org filtering works out of the box.
   const tAdminUsername = spec.slug + 'admin';
   const tAdminEmail = 'admin@' + spec.slug + '.local';
   const tenantAdminId = await insertOne(
     conn, 'users',
-    ['tenant_id', 'department_id', 'site_id', 'username', 'password',
+    ['tenant_id', 'organisation_id', 'department_id', 'site_id', 'username', 'password',
      'name', 'lname', 'email', 'designation',
      'role', 'status', 'is_approved'],
-    [tenantId, deptIds[0], siteIds[0], tAdminUsername, bulkPwHash,
+    [tenantId, organisationId, deptIds[0], siteIds[0], tAdminUsername, bulkPwHash,
      'Tenant', 'Admin', tAdminEmail, 'Tenant Admin',
      'tenant_admin', 1, 1]
   );
@@ -336,10 +381,10 @@ async function seedTenant(conn, spec, idx, bulkPwHash) {
     const deptId = deptIds[u % deptIds.length];
     const uid = await insertOne(
       conn, 'users',
-      ['tenant_id', 'department_id', 'site_id', 'username', 'password',
+      ['tenant_id', 'organisation_id', 'department_id', 'site_id', 'username', 'password',
        'name', 'lname', 'email', 'mobile',
        'designation', 'role', 'status', 'is_approved', 'is_approver'],
-      [tenantId, deptId, siteId, username, bulkPwHash,
+      [tenantId, organisationId, deptId, siteId, username, bulkPwHash,
        fn, ln, email, randomMobile(),
        designation, role, 1, 1, isApprover]
     );

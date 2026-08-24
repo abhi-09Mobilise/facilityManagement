@@ -324,6 +324,27 @@ export default function FacilityDetailPage() {
 
   async function handleConfirm() {
     if (!selected) return;
+    // Pre-flight friendly errors so the booker sees what's wrong, in plain English.
+    if (!selected) {
+      setSubmitError('Please pick a facility first.');
+      return;
+    }
+    if (!slotPicked) {
+      setSubmitError('Please pick a time slot before submitting.');
+      return;
+    }
+    if (!title.trim()) {
+      setSubmitError('Please add a title for your booking — it helps approvers and your team identify it.');
+      return;
+    }
+    if (selected.type === 'desk' && selectedDeskIds.length < 1) {
+      setSubmitError('Please pick at least one chair from the floor plan.');
+      return;
+    }
+    if (guestEmailError) {
+      setSubmitError(guestEmailError);
+      return;
+    }
     if (localValidationError) { setSubmitError(localValidationError); return; }
     if (guestEmailError) { setSubmitError(guestEmailError); return; }
     if (checkState === 'conflict') {
@@ -425,16 +446,25 @@ export default function FacilityDetailPage() {
       return objs.filter((o: { type?: string }) => o && o.type === 'chair').length;
     } catch { return 0; }
   })();
+  // T&Cs are per-facility. Only require "I agree" when the selected
+  // facility has a non-empty T&C text configured.
+  const hasTnc = !!(selected?.terms_and_conditions && selected.terms_and_conditions.trim().length > 0);
   const canSubmit =
-    !!selected
-    && !localValidationError
-    && checkState === 'free'
-    && agreeTnc
+    !!selected                                        // (a) facility chosen
+    && slotPicked                                     // (b) time slot chosen
+    && !localValidationError                          // (c) time inside hours, etc.
+    && checkState === 'free'                          // (d) backend says slot is free
+    && (!hasTnc || agreeTnc)                          // (e) T&Cs accepted if any
+    && title.trim().length > 0                        // (f) title required
+    && !guestEmailError                               // (g) every guest row has a valid email
     && !submitting
-    // F09 - on desk facilities, block submit until the user has claimed at
-    // least one chair and every claimed chair is still free.
-    && (selected.type !== 'desk' || layoutChairCount === 0
-        || (selectedDeskIds.length > 0
+    // (h) Desk facilities: at least one chair must be picked, every claimed
+    //     chair must still be free, and guest count must not exceed
+    //     (chairs - 1). The old `layoutChairCount === 0` escape is gone so
+    //     misconfigured desks (no chairs on the floor plan) simply can't
+    //     be booked until the admin adds chairs.
+    && (selected.type !== 'desk'
+        || (selectedDeskIds.length >= 1
             && selectedDeskIds.every((id) => !occupiedDesks.includes(id))
             && guests.length <= Math.max(0, selectedDeskIds.length - 1)));
 
@@ -632,8 +662,21 @@ export default function FacilityDetailPage() {
                   <Divider sx={{ my: 3 }} />
                   <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Your booking</Typography>
                   <Stack spacing={2}>
-                    <TextField label="Title" size="small" fullWidth value={title}
-                      onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Sprint planning" />
+                    {/* Title — strongly recommended, not strictly required.
+                        Empty-title bookings still submit, but the helperText
+                        nudges the booker (a named booking is much easier for
+                        approvers + admins to scan in lists & emails). */}
+                    <TextField
+                      required
+                      label="Title"
+                      size="small"
+                      fullWidth
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="e.g. Sprint planning"
+                      error={!title.trim()}
+                      helperText={title.trim() ? ' ' : 'Title is required — describe the booking so approvers and your team can identify it.'}
+                    />
                     <TextField label="Remarks" size="small" fullWidth multiline minRows={2}
                       value={remarks} onChange={(e) => setRemarks(e.target.value)} />
 
@@ -782,10 +825,31 @@ export default function FacilityDetailPage() {
                       </Box>
                     )}
 
-                    <FormControlLabel
-                      control={<Checkbox checked={agreeTnc} onChange={(e) => setAgreeTnc(e.target.checked)} />}
-                      label={<>Yes, I agree to the <a href="#">Terms &amp; Conditions</a></>}
-                    />
+                    {/* Per-facility T&Cs — only renders when the admin has
+                        configured them on the selected facility. */}
+                    {hasTnc && (
+                      <Box
+                        sx={{
+                          p: 2, mb: 1,
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          maxHeight: 200, overflowY: 'auto',
+                        }}
+                      >
+                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                          Terms &amp; Conditions
+                        </Typography>
+                        <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
+                          {selected?.terms_and_conditions}
+                        </Typography>
+                      </Box>
+                    )}
+                    {hasTnc && (
+                      <FormControlLabel
+                        control={<Checkbox checked={agreeTnc} onChange={(e) => setAgreeTnc(e.target.checked)} />}
+                        label="I have read and agree to the Terms & Conditions"
+                      />
+                    )}
 
                     {/* F06 - pantry order panel (only renders if facility's
                         site has linked pantries) */}

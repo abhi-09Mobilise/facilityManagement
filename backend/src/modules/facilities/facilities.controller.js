@@ -12,6 +12,7 @@ const { query, execute, withTransaction } = require('../../db/pool');
 const { ok, created, fail } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull, assertOwnership } = require('../../utils/tenantScope');
+const { scopeOrgWhere } = require('../../utils/orgScope');
 
 const VALID_TYPES = ['meeting_room','gym','conference_room','desk','swimming_pool','other'];
 
@@ -58,6 +59,13 @@ exports.list = asyncHandler(async function (req, res) {
   const siteId = intOrNull(req.query.site_id);
   if (siteId !== null) { where.push('f.site_id = ?'); params.push(siteId); }
 
+  // Org scoping — facilities inherit their org via the parent site.
+  const orgScope = scopeOrgWhere(req, 's.organisation_id');
+  if (orgScope.sql) {
+    where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...orgScope.params);
+  }
+
   if (req.query.type) { where.push('f.type = ?'); params.push(req.query.type); }
   if (req.query.q)    {
     where.push('f.name LIKE ?');
@@ -66,16 +74,18 @@ exports.list = asyncHandler(async function (req, res) {
   const whereSql = where.join(' AND ');
 
   const total = (await query(
-    'SELECT COUNT(*) cnt FROM `facilities` f WHERE ' + whereSql,
+    'SELECT COUNT(*) cnt FROM `facilities` f ' +
+    ' LEFT JOIN `sites` s ON s.id = f.site_id ' +
+    ' WHERE ' + whereSql,
     params
   ))[0].cnt;
 
   const rows = await query(
-    'SELECT f.id, f.tenant_id, f.site_id, f.floor_id, f.name, f.type, f.capacity, f.offline_capacity, ' +
+    'SELECT f.id, f.tenant_id, f.site_id, s.organisation_id, f.floor_id, f.name, f.type, f.capacity, f.offline_capacity, ' +
     '       f.min_advance_minutes, f.max_advance_days, f.max_per_user_per_day, ' +
     '       f.max_per_user_per_week, f.max_per_user_per_month, ' +
     '       f.pre_end_notify_minutes, ' +
-    '       f.description, f.image_url, f.layout_json, f.requires_approval, f.shared_booking, ' +
+    '       f.description, f.terms_and_conditions, f.image_url, f.layout_json, f.requires_approval, f.shared_booking, ' +
     '       f.facility_approver_user_id, f.public_listed, ' +
     '       f.status, f.created_at, ' +
     '       t.name AS tenant_name, s.name AS site_name, fl.name AS floor_name ' +
@@ -118,6 +128,14 @@ exports.create = asyncHandler(async function (req, res) {
   const site = await assertOwnership(req, 'sites', intOrNull(b.site_id));
   if (!site.ok) return fail(res, site.msg, site.status);
 
+  // Cross-org guard for org-scoped roles.
+  const role = req.user.role;
+  if (role !== 'super_admin' && role !== 'tenant_admin') {
+    if (site.row.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden: site belongs to a different organisation', 403);
+    }
+  }
+
   let floorId = intOrNull(b.floor_id);
   if (floorId !== null) {
     const floor = await assertOwnership(req, 'floors', floorId);
@@ -144,7 +162,11 @@ exports.create = asyncHandler(async function (req, res) {
     return n < 0 ? null : n;
   }
   const minAdvMin    = ruleVal(b.min_advance_minutes);
-  const maxAdvDays   = ruleVal(b.max_advance_days);
+  // Server-side cap: even if a malicious client sends 999, we store 60.
+  // Matches the frontend constraint (FacilityFormPage inputProps max=60).
+  let maxAdvDays     = ruleVal(b.max_advance_days);
+  if (maxAdvDays !== null && maxAdvDays > 60) maxAdvDays = 60;
+  if (maxAdvDays !== null && maxAdvDays < 0)  maxAdvDays = 0;
   const maxPerDay    = ruleVal(b.max_per_user_per_day);
   const maxPerWeek   = ruleVal(b.max_per_user_per_week);
   const maxPerMonth  = ruleVal(b.max_per_user_per_month);
@@ -163,13 +185,13 @@ exports.create = asyncHandler(async function (req, res) {
       'INSERT INTO `facilities` (tenant_id, site_id, floor_id, name, type, capacity, offline_capacity, ' +
       '       min_advance_minutes, max_advance_days, max_per_user_per_day, ' +
       '       max_per_user_per_week, max_per_user_per_month, pre_end_notify_minutes, ' +
-      '       description, image_url, layout_json, requires_approval, shared_booking, facility_approver_user_id) ' +
+      '       description, terms_and_conditions, image_url, layout_json, requires_approval, shared_booking, facility_approver_user_id) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         site.row.tenant_id, site.row.id, floorId,
         b.name, b.type, capVal, offlineVal,
         minAdvMin, maxAdvDays, maxPerDay, maxPerWeek, maxPerMonth, preEndMin,
-        b.description || null, b.image_url || null,
+        b.description || null, b.terms_and_conditions || null, b.image_url || null,
         b.layout_json ? (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)) : null,
         b.requires_approval ? 1 : 0,
         b.shared_booking ? 1 : 0,
@@ -205,6 +227,18 @@ exports.update = asyncHandler(async function (req, res) {
   if (id === null) return fail(res, 'Invalid id', 400);
   const r = await assertOwnership(req, 'facilities', id);
   if (!r.ok) return fail(res, r.msg, r.status);
+
+  // Cross-org guard: an org_admin can only edit facilities inside their org.
+  const role = req.user.role;
+  if (role !== 'super_admin' && role !== 'tenant_admin') {
+    const siteRow = (await query(
+      'SELECT organisation_id FROM `sites` WHERE id = ? LIMIT 1',
+      [r.row.site_id]
+    ))[0];
+    if (!siteRow || siteRow.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden', 403);
+    }
+  }
 
   const b = req.body || {};
   if (b.type && !VALID_TYPES.includes(b.type)) {
@@ -270,6 +304,7 @@ exports.update = asyncHandler(async function (req, res) {
     '  max_per_user_per_month     = ' + (fMonth.present ? '?' : 'max_per_user_per_month') + ', ' +
     '  pre_end_notify_minutes     = ' + (fPre.present   ? '?' : 'pre_end_notify_minutes')   + ', ' +
     '  description                = COALESCE(?, description), ' +
+    '  terms_and_conditions       = COALESCE(?, terms_and_conditions), ' +
     '  image_url                  = COALESCE(?, image_url), ' +
     '  layout_json                = ' + (hasLayout ? '?' : 'layout_json') + ', ' +
     '  requires_approval          = COALESCE(?, requires_approval), ' +

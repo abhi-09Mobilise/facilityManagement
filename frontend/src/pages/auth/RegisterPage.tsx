@@ -12,6 +12,7 @@ interface FormState {
   confirmPassword: string;
   name: string;
   lname: string;
+  tenant_slug : string;
   email: string;
   mobile: string;
 }
@@ -23,7 +24,7 @@ export default function RegisterPage() {
   const navigate = useNavigate();
 
   const [form, setForm] = useState<FormState>({
-    username: '', password: '', confirmPassword: '',
+    username: '', password: '', confirmPassword: '', tenant_slug:'',
     name: '', lname: '', email: '', mobile: '',
   });
   const [saving, setSaving] = useState(false);
@@ -56,6 +57,7 @@ export default function RegisterPage() {
         username: form.username.trim(),
         password: form.password,
         name: form.name || undefined,
+        tenant_slug : form.tenant_slug || "",
         lname: form.lname || undefined,
         email: form.email || undefined,
         mobile: form.mobile || undefined,

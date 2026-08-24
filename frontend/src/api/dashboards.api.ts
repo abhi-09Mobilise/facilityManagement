@@ -43,12 +43,23 @@ export interface GanttPayload {
 }
 
 export const dashboardsApi = {
-  tenantAdmin(params: { tenant_id?: number; site_id?: number; limit?: number } = {}) {
+  tenantAdmin(params: {
+    tenant_id?: number;
+    organisation_id?: number;
+    site_id?: number;
+    limit?: number;
+  } = {}) {
     return api
       .get<ApiEnvelope<DashboardPayload>>('/dashboards/tenant-admin', { params })
       .then((r) => r.data);
   },
-  gantt(params: { site_id?: number; from?: string; to?: string; tenant_id?: number } = {}) {
+  gantt(params: {
+    tenant_id?: number;
+    organisation_id?: number;
+    site_id?: number;
+    from?: string;
+    to?: string;
+  } = {}) {
     return api
       .get<ApiEnvelope<GanttPayload>>('/dashboards/gantt', { params })
       .then((r) => r.data);

@@ -3,11 +3,11 @@ const ctrl = require('./floors.controller');
 const { authRequired, requireRole } = require('../../middleware/auth');
 
 router.use(authRequired);
-router.use(requireRole('super_admin', 'tenant_admin'));
+router.use(requireRole('super_admin', 'tenant_admin', 'org_admin'));
 
 router.get('/',        ctrl.list);
 router.post('/',       ctrl.create);
 router.put('/:id',     ctrl.update);
-router.delete('/:id',  ctrl.remove);
+router.delete('/:id',  requireRole('super_admin', 'tenant_admin'), ctrl.remove);
 
 module.exports = router;

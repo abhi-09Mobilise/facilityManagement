@@ -17,9 +17,9 @@ import {
 } from 'recharts';
 import { dashboardsApi, type DashboardPayload, type DashboardFacility } from '@/api/dashboards.api';
 import { sitesApi } from '@/api/sites.api';
-import { tenantsApi } from '@/api/tenants.api';
 import { useAuth } from '@/context/AuthContext';
-import type { FacilityType, Site, Tenant } from '@/types';
+import { useTenantScope } from '@/context/TenantScopeContext';
+import type { FacilityType, Site } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -72,48 +72,39 @@ export default function DashboardPage() {
   // any chart — kept declared above so a future hover-aware view can reuse it.
   void hovered;
 
-  // Scope pickers.
-  //   super_admin → pick one tenant (cross-tenant aggregate froze the screen
-  //                 with 1000+ facilities).
-  //   tenant_admin → optional site filter so we don't fetch every facility
-  //                  across every site.
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+  // Scope. Tenant + Organisation are OWNED BY THE NAVBAR (TenantScopeContext);
+  // this page just consumes them. Site is a page-level detail — kept local
+  // so switching sites doesn't leak into other pages.
+  const scope = useTenantScope();
   const [sites,   setSites]   = useState<Site[]>([]);
-  const [tenantId, setTenantId] = useState<number | ''>('');
-  const [siteId,   setSiteId]   = useState<number | ''>('');
+  const [siteId,  setSiteId]  = useState<number | ''>('');
 
-  // Load tenant list once (super_admin only) and auto-pick the first.
+  // Site list reacts to the active tenant (super_admin picks) or the user's
+  // JWT tenant (tenant_admin). Re-fetch whenever the effective tenant OR
+  // organisation changes so the sites we list stay in scope.
   useEffect(() => {
-    if (!isSuper) return;
-    tenantsApi.list({ limit: 200 }).then((r) => {
-      const list = (r.data?.data || []) as Tenant[];
-      setTenants(list);
-      if (list.length > 0 && tenantId === '') setTenantId(list[0].id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuper]);
-
-  // Site list reacts to the active tenant (super_admin) or to the user's
-  // own tenant scope (tenant_admin). Always re-fetch when the tenant changes.
-  useEffect(() => {
-    // tenant_admin → API uses their tenant_id from the JWT; no param needed.
-    // super_admin → only meaningful once a tenant is picked.
-    if (isSuper && !tenantId) { setSites([]); return; }
-    sitesApi.list({ limit: 200 }).then((r) => {
+    if (isSuper && !scope.tenantId) { setSites([]); return; }
+    const params: Record<string, unknown> = { limit: 200 };
+    if (isSuper && scope.tenantId)     params.tenant_id       = scope.tenantId;
+    if (scope.organisationId !== null) params.organisation_id = scope.organisationId;
+    sitesApi.list(params).then((r) => {
       setSites((r.data?.data || []) as Site[]);
     });
-  }, [isSuper, tenantId]);
+  }, [isSuper, scope.tenantId, scope.organisationId]);
 
-  // Reset the site filter when the tenant switches (super_admin only).
-  useEffect(() => { setSiteId(''); }, [tenantId]);
+  // Reset the site filter whenever the tenant OR organisation switches.
+  useEffect(() => { setSiteId(''); }, [scope.tenantId, scope.organisationId]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const params: { tenant_id?: number; site_id?: number; limit?: number } = { limit: 150 };
-      if (isSuper && tenantId) params.tenant_id = tenantId;
-      if (siteId) params.site_id = siteId;
+      const params: {
+        tenant_id?: number; organisation_id?: number; site_id?: number; limit?: number;
+      } = { limit: 150 };
+      if (isSuper && scope.tenantId)     params.tenant_id       = scope.tenantId;
+      if (scope.organisationId !== null) params.organisation_id = scope.organisationId;
+      if (siteId)                        params.site_id         = Number(siteId);
       const r = await dashboardsApi.tenantAdmin(params);
       if (r.status && r.data) setData(r.data);
       else setError(r.msg || 'Failed to load dashboard');
@@ -124,17 +115,18 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }
-  // Re-fetch whenever the scope changes. The picker is the throttle: nothing
-  // loads until the super_admin has chosen a tenant.
+  // Re-fetch whenever any scope value changes. super_admin needs to pick a
+  // tenant first (via the navbar) — otherwise we render a hint instead of
+  // hammering the API with an unscoped query.
   useEffect(() => {
-    if (isSuper && !tenantId) {
+    if (isSuper && !scope.tenantId) {
       setData(null);
       setLoading(false);
       return;
     }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuper, tenantId, siteId]);
+  }, [isSuper, scope.tenantId, scope.organisationId, siteId]);
 
   if (loading && !data) {
     return (
@@ -240,7 +232,7 @@ export default function DashboardPage() {
   const hasAnyDetail = detailData.some((r) => r.booked > 0);
 
   return (
-    <div className="space-y-6 max-w-7xl">
+    <div className="space-y-6">
       {/* ---- header ---- */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
@@ -255,30 +247,21 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Scope pickers — drive the API params + throttle data fetching */}
+      {/* Page-local Site picker. Tenant + Organisation are set in the navbar
+          (TenantScopeContext) and drive this page automatically. */}
       <div className="flex flex-wrap items-center gap-2">
-        {isSuper && (
-          <select
-            className="h-9 rounded border border-input bg-background px-2 text-sm w-full sm:w-auto sm:min-w-[220px]"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value ? Number(e.target.value) : '')}
-          >
-            <option value="">Pick a tenant…</option>
-            {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        )}
         <select
           className="h-9 rounded border border-input bg-background px-2 text-sm w-full sm:w-auto sm:min-w-[180px]"
           value={siteId}
           onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : '')}
-          disabled={isSuper && !tenantId}
+          disabled={isSuper && !scope.tenantId}
         >
           <option value="">All sites</option>
           {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        {isSuper && !tenantId && (
+        {isSuper && !scope.tenantId && (
           <span className="text-xs text-muted-foreground">
-            Pick a tenant to load its dashboard
+            Pick a tenant in the navbar to load its dashboard
           </span>
         )}
       </div>

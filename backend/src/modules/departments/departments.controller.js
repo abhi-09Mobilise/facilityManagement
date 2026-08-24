@@ -9,6 +9,7 @@ const { query, execute } = require('../../db/pool');
 const { ok, created, fail } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull, effectiveTenantId, assertOwnership } = require('../../utils/tenantScope');
+const { effectiveOrgId, scopeOrgWhere } = require('../../utils/orgScope');
 const mailer = require('../../utils/mailer');
 const { userContact, tenantName } = require('../../utils/mailRecipients');
 
@@ -22,6 +23,13 @@ exports.list = asyncHandler(async function (req, res) {
   } else {
     where.push('d.tenant_id = ?');
     params.push(req.user.tenant_id);
+  }
+
+  // Org scoping — departments have their own organisation_id column since 036.
+  const orgScope = scopeOrgWhere(req, 'd.organisation_id');
+  if (orgScope.sql) {
+    where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...orgScope.params);
   }
 
   // ?site_id= cascade filter (e.g. UserCreatePage loads depts after a site
@@ -83,6 +91,18 @@ exports.create = asyncHandler(async function (req, res) {
     return fail(res, 'site_id is not valid for this tenant', 422);
   }
 
+  // Cross-org guard: org-scoped roles cannot create a department in a site
+  // that belongs to a different org.
+  const role = req.user.role;
+  if (role !== 'super_admin' && role !== 'tenant_admin') {
+    if (site.row.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden: site belongs to a different organisation', 403);
+    }
+  }
+  // organisation_id is NOT NULL post-migration 038. Inherit it from the site
+  // so the department always sits in the same org as its parent site.
+  const organisationId = site.row.organisation_id;
+
   // Parent department is optional (and the UI no longer exposes it).
   const parentId = intOrNull(b.parent_dept_id);
   if (parentId !== null) {
@@ -100,10 +120,11 @@ exports.create = asyncHandler(async function (req, res) {
   }
 
   const r = await execute(
-    'INSERT INTO `departments` (tenant_id, site_id, name, code, parent_dept_id, manager_user_id) ' +
-    'VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO `departments` (tenant_id, organisation_id, site_id, name, code, parent_dept_id, manager_user_id) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?)',
     [
       tenantId,
+      organisationId,
       site.row.id,
       b.name, b.code || null,
       parentId, intOrNull(b.manager_user_id),
@@ -141,17 +162,35 @@ exports.update = asyncHandler(async function (req, res) {
   const r = await assertOwnership(req, 'departments', id);
   if (!r.ok) return fail(res, r.msg, r.status);
 
+  // Cross-org guard for org-scoped roles: the department must belong to
+  // their org.
+  const role = req.user.role;
+  if (role !== 'super_admin' && role !== 'tenant_admin') {
+    if (r.row.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden', 403);
+    }
+  }
+
   const b = req.body || {};
 
   // Allow moving a department to a different site, but it must belong to
-  // the same tenant.
+  // the same tenant. If the site's org differs, the department follows
+  // (the department's org column mirrors its parent site).
   let newSiteId = null;
+  let newOrgId  = null;
   if (b.site_id !== undefined && b.site_id !== null && b.site_id !== '') {
     const site = await assertOwnership(req, 'sites', intOrNull(b.site_id));
     if (!site.ok || site.row.tenant_id !== r.row.tenant_id) {
       return fail(res, 'site_id is not valid for this tenant', 422);
     }
+    // org-scoped role cannot move a department into a foreign-org site.
+    if (role !== 'super_admin' && role !== 'tenant_admin') {
+      if (site.row.organisation_id !== req.user.organisation_id) {
+        return fail(res, 'Forbidden: target site belongs to a different organisation', 403);
+      }
+    }
     newSiteId = site.row.id;
+    newOrgId  = site.row.organisation_id;
   }
 
   const parentId = intOrNull(b.parent_dept_id);
@@ -168,6 +207,7 @@ exports.update = asyncHandler(async function (req, res) {
     '  name            = COALESCE(?, name), ' +
     '  code            = COALESCE(?, code), ' +
     '  site_id         = COALESCE(?, site_id), ' +
+    '  organisation_id = COALESCE(?, organisation_id), ' +
     '  parent_dept_id  = COALESCE(?, parent_dept_id), ' +
     '  manager_user_id = COALESCE(?, manager_user_id), ' +
     '  status          = COALESCE(?, status) ' +
@@ -175,6 +215,7 @@ exports.update = asyncHandler(async function (req, res) {
     [
       b.name || null, b.code || null,
       newSiteId,
+      newOrgId,
       parentId, intOrNull(b.manager_user_id),
       intOrNull(b.status), id,
     ]

@@ -4,6 +4,7 @@ const { query, execute } = require('../../db/pool');
 const { ok, created, fail } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull, effectiveTenantId, assertOwnership } = require('../../utils/tenantScope');
+const { effectiveOrgId, scopeOrgWhere } = require('../../utils/orgScope');
 const mailer = require('../../utils/mailer');
 const { tenantAdminEmails, tenantName } = require('../../utils/mailRecipients');
 
@@ -27,6 +28,15 @@ exports.list = asyncHandler(async function (req, res) {
     params.push(req.user.tenant_id);
   }
 
+  // Org scoping: super_admin/tenant_admin honour ?organisation_id=; org_admin
+  // and below are hard-scoped to their own org.
+  const orgScope = scopeOrgWhere(req, 's.organisation_id');
+  if (orgScope.sql) {
+    // strip leading ' AND ' for consistency with the string join here
+    where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...orgScope.params);
+  }
+
   // Free-text search across name, code, address. LIKE wildcards escaped.
   const qRaw = String(req.query.q || '').trim();
   if (qRaw) {
@@ -35,6 +45,13 @@ exports.list = asyncHandler(async function (req, res) {
     params.push(like, like, like);
   }
   const whereSql = where.join(' AND ');
+console.log("where sql ", whereSql , "params : ", params)
+
+  // TEMP DEBUG — prove which DB and which schema the running pool queries.
+  const dbInfo = await query("SELECT DATABASE() AS db, @@port AS port, @@hostname AS host");
+  console.log('[sites.list] runtime pool ->', dbInfo);
+  const colInfo = await query("SHOW COLUMNS FROM `sites` LIKE 'organisation_id'");
+  console.log('[sites.list] sites.organisation_id rows via pool ->', colInfo.length);
 
   const total = (await query(
     'SELECT COUNT(*) cnt FROM `sites` s WHERE ' + whereSql,
@@ -42,10 +59,11 @@ exports.list = asyncHandler(async function (req, res) {
   ))[0].cnt;
 
   const rows = await query(
-    'SELECT s.id, s.tenant_id, s.name, s.code, s.address, s.timezone, s.status, s.created_at, ' +
-    '       t.name AS tenant_name ' +
+    'SELECT s.id, s.tenant_id, s.organisation_id, s.name, s.code, s.address, s.timezone, s.status, s.created_at, ' +
+    '       t.name AS tenant_name, o.name AS organisation_name ' +
     '  FROM `sites` s ' +
     '  LEFT JOIN `tenants` t ON t.id = s.tenant_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = s.organisation_id ' +
     ' WHERE ' + whereSql +
     ` ORDER BY s.id LIMIT ${limit} OFFSET ${offset}`,
     params
@@ -65,12 +83,47 @@ exports.getOne = asyncHandler(async function (req, res) {
 exports.create = asyncHandler(async function (req, res) {
   const b = req.body || {};
   if (!b.name) return fail(res, 'name is required', 422);
-  const tenantId = effectiveTenantId(req, b.tenant_id);
+
+  let tenantId = effectiveTenantId(req, b.tenant_id);
+
+  // organisation_id resolution:
+  //   org_admin: server-forced from JWT (ignores any body override)
+  //   super_admin / tenant_admin: uses body-provided organisation_id
+  //   others: not reachable here (route is admin-gated)
+  let organisationId = effectiveOrgId(req, b.organisation_id);
+
+  // If tenantId wasn't provided (common when a super_admin doesn't send it
+  // explicitly), derive it from the chosen organisation. This makes
+  // organisation_id the single required parent field on the client.
+  if (tenantId === null && organisationId !== null) {
+    const orgRow = await query(
+      'SELECT id, tenant_id FROM `organisations` WHERE id = ? AND trash = 0 LIMIT 1',
+      [organisationId]
+    );
+    if (orgRow.length === 0) return fail(res, 'organisation_id is not valid', 422);
+    tenantId = orgRow[0].tenant_id;
+  }
   if (tenantId === null) return fail(res, 'tenant_id is required', 422);
 
+  if (organisationId === null) {
+    // Fall back to the tenant's Default org so pre-org clients keep working.
+    const def = await query(
+      "SELECT id FROM `organisations` WHERE tenant_id = ? AND slug = 'default' AND trash = 0 LIMIT 1",
+      [tenantId]
+    );
+    if (def.length === 0) return fail(res, 'organisation_id is required (no default org for tenant)', 422);
+    organisationId = def[0].id;
+  }
+  // Validate the chosen org actually belongs to this tenant.
+  const orgCheck = await query(
+    'SELECT id FROM `organisations` WHERE id = ? AND tenant_id = ? AND trash = 0 LIMIT 1',
+    [organisationId, tenantId]
+  );
+  if (orgCheck.length === 0) return fail(res, 'organisation_id is not valid for this tenant', 422);
+
   const r = await execute(
-    'INSERT INTO `sites` (tenant_id, name, code, address, timezone) VALUES (?, ?, ?, ?, ?)',
-    [tenantId, b.name, b.code || null, b.address || null, b.timezone || null]
+    'INSERT INTO `sites` (tenant_id, organisation_id, name, code, address, timezone) VALUES (?, ?, ?, ?, ?, ?)',
+    [tenantId, organisationId, b.name, b.code || null, b.address || null, b.timezone || null]
   );
 
   // Notify tenant admins (fire-and-forget). Wrapped in an async IIFE so the
@@ -103,6 +156,14 @@ exports.update = asyncHandler(async function (req, res) {
   if (id === null) return fail(res, 'Invalid id', 400);
   const r = await assertOwnership(req, 'sites', id);
   if (!r.ok) return fail(res, r.msg, r.status);
+
+  // Extra guard for org-scoped roles: the site must belong to the caller's org.
+  const role = req.user.role;
+  if (role !== 'super_admin' && role !== 'tenant_admin') {
+    if (r.row.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden', 403);
+    }
+  }
 
   const b = req.body || {};
   await execute(

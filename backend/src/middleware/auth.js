@@ -1,8 +1,9 @@
 // JWT auth + light role-based gates.
-// Token shape: { sub, username, name, email, role, tenant_id }
-//   sub        - user id (used as req.user.id)
-//   role       - 'super_admin' | 'tenant_admin' | 'approver' | 'employee'
-//   tenant_id  - integer (null for super admins)
+// Token shape: { sub, username, name, email, role, tenant_id, organisation_id }
+//   sub              - user id (used as req.user.id)
+//   role             - 'super_admin' | 'tenant_admin' | 'org_admin' | 'approver' | 'employee'
+//   tenant_id        - integer (null for super admins)
+//   organisation_id  - integer (null for super admins and pre-org tokens)
 
 const jwt = require('jsonwebtoken');
 const config = require('../config');
@@ -24,6 +25,7 @@ function authRequired(req, res, next) {
       email: decoded.email,
       role: decoded.role,
       tenant_id: decoded.tenant_id || null,
+      organisation_id: decoded.organisation_id || null,
     };
     return next();
   } catch (err) {
@@ -51,6 +53,7 @@ function signToken(user) {
       email: user.email,
       role: user.role,
       tenant_id: user.tenant_id || null,
+      organisation_id: user.organisation_id || null,
     },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn }

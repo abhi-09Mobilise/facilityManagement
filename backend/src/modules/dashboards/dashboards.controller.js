@@ -56,6 +56,16 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     tenantParams.push(siteId);
   }
 
+  // Organisation scope. The navbar picker sends ?organisation_id= from
+  // TenantScopeContext, so all admin roles honour it when present.
+  // Facilities don't have an organisation_id column of their own —
+  // resolve it via the parent site.
+  const orgId = intOrNull(req.query.organisation_id);
+  if (orgId !== null) {
+    tenantClause += ' AND f.site_id IN (SELECT id FROM `sites` WHERE organisation_id = ?) ';
+    tenantParams.push(orgId);
+  }
+
   // -- per-facility today_open_minutes from operating hours --
   // MySQL's DAYOFWEEK returns 1..7 (Sun=1); our schema uses 0..6 (Sun=0).
   const openRows = await query(
@@ -187,10 +197,17 @@ exports.gantt = asyncHandler(async function (req, res) {
   const toMysql   = toStr   + ' 23:59:59';
 
   // Build the facilities WHERE: tenantClause is already 'AND f.tenant_id...'
-  // (or empty for cross-tenant super_admin view); site filter is optional.
+  // (or empty for cross-tenant super_admin view); site + org filters optional.
   const facExtra = [];
   const facExtraParams = [];
   if (siteId) { facExtra.push(' AND f.site_id = ? '); facExtraParams.push(siteId); }
+  // Organisation scope from the navbar picker. Facilities don't have their
+  // own organisation_id — resolve it via the parent site.
+  const ganttOrgId = intOrNull(req.query.organisation_id);
+  if (ganttOrgId !== null) {
+    facExtra.push(' AND f.site_id IN (SELECT id FROM `sites` WHERE organisation_id = ?) ');
+    facExtraParams.push(ganttOrgId);
+  }
 
   // Cross-tenant view labels each facility with its tenant for readability.
   const facilities = await query(
