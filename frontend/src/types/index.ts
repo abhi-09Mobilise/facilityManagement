@@ -1,6 +1,6 @@
 // Shared types for the multi-tenant Facility Booking app.
 
-export type Role = 'super_admin' | 'tenant_admin' | 'approver' | 'employee';
+export type Role = 'super_admin' | 'tenant_admin' | 'org_admin' | 'approver' | 'employee';
 
 export interface ApiEnvelope<T = unknown> {
   status: boolean;
@@ -59,17 +59,54 @@ export interface Currency { code: string; name: string; symbol: string; decimals
 export interface Timezone { name: string; display_name: string; utc_offset: string; status?: 0 | 1; }
 export interface Locale   { code: string; name: string; native_name?: string; status?: 0 | 1; }
 
+// Organisation — the Stage 1 layer between Tenant and Site. Every tenant
+// gets a 'Default' org for legacy compatibility; multi-org tenants can spawn
+// more via /admin/organisations.
+export interface Organisation {
+  id: number;
+  tenant_id: number;
+  tenant_name?: string;
+  name: string;
+  slug: string;
+  logo_url?: string | null;
+  status: 0 | 1;
+  created_at?: string;
+}
+
 // ----- Tenant-admin masters ----------------------------------------------
 
 export interface Site {
   id: number;
   tenant_id: number;
   tenant_name?: string;
+  // Stage 1 org hierarchy — every site now belongs to an Organisation
+  // (which belongs to a Tenant). Admin forms pick this via a dropdown on
+  // create; edit is locked.
+  organisation_id?: number;
+  organisation_name?: string;
   name: string;
   code?: string;
   address?: string;
   timezone?: string;
   status: 0 | 1;
+  created_at?: string;
+}
+
+// Building — Phase A layer between Site and Floor. Every site auto-gets a
+// "Default" building on migration 042; admins can then create more.
+export interface Building {
+  id: number;
+  tenant_id: number;
+  tenant_name?: string;
+  organisation_id: number;
+  organisation_name?: string;
+  site_id: number;
+  site_name?: string;
+  name: string;
+  code?: string | null;
+  address?: string | null;
+  status: 0 | 1;
+  trash?: 0 | 1;
   created_at?: string;
 }
 
@@ -79,6 +116,11 @@ export interface Floor {
   tenant_name?: string;
   site_id: number;
   site_name?: string;
+  // Phase A buildings layer — every floor now belongs to a Building
+  // (which belongs to a Site). Admin forms pick this via a Site → Building
+  // cascade on create; edit is locked.
+  building_id?: number;
+  building_name?: string;
   name: string;
   level_number?: number;
   // F09 - optional floor plan image (base64 data URL or path). When set,
@@ -186,6 +228,9 @@ export interface Facility {
   // facility's 'cleanup' chain. NULL/0 disables the feature.
   pre_end_notify_minutes?: number | null;
   description?: string;
+  // Free-form T&Cs shown to the booker before they confirm. Empty = no
+  // acceptance step.
+  terms_and_conditions?: string | null;
   image_url?: string;
   // F09 - desk layout JSON. Backend stores as TEXT; we round-trip the parsed object.
   layout_json?: string | FacilityLayout | null;

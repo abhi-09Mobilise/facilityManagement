@@ -1,28 +1,29 @@
 // Admin facilities list.
 //
-// Filter UX (this rev):
-//   - Primary filter: one button per facility type that actually exists
-//     in this tenant (derived from a one-time full list fetch on mount).
-//     "All" is the default. Single-select; clicking the active button
-//     reverts to "All".
-//   - Secondary filters (Search + Site) are tucked behind a "More filters"
-//     toggle — kept off-screen by default to make the type buttons the
-//     focal point. The toggle text shows a chip with the count of active
-//     non-type filters so admins know there's something hidden.
+// UX (unified with the other master pages):
+//   - Header: filter icon + Download Excel + "New facility" button.
+//   - Filter popover holds Search, Site and Type.
+//   - Row status is a live Active / Inactive Switch.
+//   - Refresh handler is exposed to the navbar via useRegisterRefresh.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
-import SearchInput from '@/components/SearchInput';
-import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import {
+  Box, Button, Chip, CircularProgress, MenuItem, Stack, Switch, TextField, Typography,
+} from '@mui/material';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import * as XLSX from 'xlsx';
 import type { GridColDef } from '@mui/x-data-grid';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import CrudTable from '@/components/CrudTable';
+import FilterPopover from '@/components/FilterPopover';
 import { facilitiesApi } from '@/api/facilities.api';
 import { sitesApi } from '@/api/sites.api';
-import type { Facility, FacilityType, Site } from '@/types';
+import { buildingsApi } from '@/api/buildings.api';
+import { useMastersFilterOptional } from '@/contexts/MastersFilterContext';
+import { useTenantScope } from '@/context/TenantScopeContext';
+import { useRegisterRefresh } from '@/context/RefreshContext';
+import type { Building, Facility, FacilityType, Site } from '@/types';
 
 const TYPE_LABEL: Record<FacilityType, string> = {
   meeting_room:    'Meeting room',
@@ -33,414 +34,289 @@ const TYPE_LABEL: Record<FacilityType, string> = {
   other:           'Other',
 };
 
-// Stable display order (so the buttons don't shuffle around as data loads).
 const TYPE_ORDER: FacilityType[] = [
   'meeting_room', 'conference_room', 'gym', 'desk', 'swimming_pool', 'other',
 ];
 
+type FacilityRow = Facility & { _sno: number };
+
 export default function FacilitiesListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const inMasters = location.pathname.startsWith('/admin/masters/');
+  const mastersFilter = useMastersFilterOptional();
+  const scope = useTenantScope();
+
   const [rows, setRows] = useState<Facility[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(25);
   const [siteId, setSiteId] = useState<number | ''>('');
   const [type, setType] = useState<'' | FacilityType>('');
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-  // Toggle for the collapsible "More filters" panel — defaults to closed
-  // so the type buttons are the only thing competing for the user's eye.
-  const [moreOpen, setMoreOpen] = useState(false);
+  // Draft filter state, applied only on the popover's Apply.
+  const [draftQ, setDraftQ] = useState('');
+  const [draftSiteId, setDraftSiteId] = useState<number | ''>('');
+  const [draftBuildingId, setDraftBuildingId] = useState<number | ''>('');
+  const [draftType, setDraftType] = useState<'' | FacilityType>('');
+  const [buildings, setBuildings] = useState<Building[]>([]);
 
-  // Distinct facility types this tenant actually owns. Fetched once on
-  // mount via a slightly larger page so even tenants with hundreds of
-  // facilities get a complete type picture. We don't expose the data
-  // itself — only the unique set of types.
-  const [availableTypes, setAvailableTypes] = useState<FacilityType[]>([]);
-  // Per-type count chip (cosmetic — admins like to know "3 gyms" before
-  // they click).
-  const [typeCounts, setTypeCounts] = useState<Record<FacilityType, number>>({} as Record<FacilityType, number>);
+  async function exportToExcel() {
+    setExporting(true);
+    try {
+      const r = await facilitiesApi.list({ page: 1, limit: 5000, q });
+      const raw = ((r as unknown) as { data?: { data?: Facility[] } })?.data?.data || [];
+      const rowsX = raw.map((f: Facility) => ({
+        Name: f.name || '',
+        Type: f.type || '',
+        Site: f.site_name || '',
+        Floor: f.floor_name || '',
+        Capacity: f.capacity ?? 0,
+        'Offline seats': f.offline_capacity ?? 0,
+        'Requires approval': f.requires_approval ? 'Yes' : 'No',
+        Status: f.status ? 'Active' : 'Inactive',
+        Description: f.description || '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(rowsX);
+      const colWidths = Object.keys(rowsX[0] || {}).map((k) => ({
+        wch: Math.max(k.length + 2, 18),
+      }));
+      ws['!cols'] = colWidths;
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Facilities');
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `facilities-${stamp}.xlsx`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert('Export failed: ' + msg);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
     try {
-      const r = await facilitiesApi.list({ page, limit: pageSize, site_id: siteId, type, q });
+      const effectiveSiteId     = inMasters ? mastersFilter.siteId     : (siteId || '');
+      const effectiveBuildingId = inMasters ? mastersFilter.buildingId : null;
+      const params: Record<string, unknown> = {
+        page, limit: pageSize, site_id: effectiveSiteId, type, q,
+      };
+      // Tenant + Organisation come from the navbar TenantScope so every
+      // masters page sees the same slice of data.
+      if (scope.tenantId !== null)       params.tenant_id       = scope.tenantId;
+      if (scope.organisationId !== null) params.organisation_id = scope.organisationId;
+      if (effectiveBuildingId) params.building_id = effectiveBuildingId;
+      const r = await facilitiesApi.list(params);
       setRows(r.data?.data || []);
       setTotal(r.data?.total || 0);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Mount: load sites + a "fat" facility list (just to compute the type
-  // universe and per-type counts). 500 is the same cap the admin can
-  // already paginate to and avoids a dedicated /types endpoint.
+  // Sites in the popover picker are scoped to the navbar tenant + org.
   useEffect(() => {
-    sitesApi.list({ limit: 100 }).then((r) => setSites(r.data?.data || []));
-    facilitiesApi.list({ limit: 500 }).then((r) => {
-      const data = (r.data?.data || []) as Facility[];
-      const counts: Record<FacilityType, number> = {} as Record<FacilityType, number>;
-      for (const f of data) {
-        if (!f.type) continue;
-        counts[f.type] = (counts[f.type] || 0) + 1;
-      }
-      const present = TYPE_ORDER.filter((t) => counts[t] > 0);
-      setAvailableTypes(present);
-      setTypeCounts(counts);
-    }).catch(() => { /* leave empty — UI just shows nothing */ });
-  }, []);
+    const params: Record<string, unknown> = { limit: 100 };
+    if (scope.tenantId !== null)       params.tenant_id       = scope.tenantId;
+    if (scope.organisationId !== null) params.organisation_id = scope.organisationId;
+    sitesApi.list(params).then((r) => setSites(r.data?.data || []));
+  }, [scope.tenantId, scope.organisationId]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, siteId, type, q]);
+  // Buildings for the popover under masters mode - scoped to draft site.
+  useEffect(() => {
+    if (!inMasters) return;
+    if (!draftSiteId) { setBuildings([]); return; }
+    buildingsApi.list({ site_id: draftSiteId, limit: 200 })
+      .then((r) => setBuildings((r.data?.data as Building[]) || []))
+      .catch(() => setBuildings([]));
+  }, [inMasters, draftSiteId]);
 
-  // Count of active secondary filters — drives the chip on the
-  // "More filters" toggle so it's clear when something's hidden.
-  const moreFilterCount = useMemo(() => {
-    return (q ? 1 : 0) + (siteId !== '' ? 1 : 0);
-  }, [q, siteId]);
+  useEffect(() => {
+    load();
+    /* eslint-disable-next-line */
+  }, [
+    page, pageSize, siteId, type, q, inMasters,
+    mastersFilter.siteId, mastersFilter.buildingId,
+    scope.tenantId, scope.organisationId,
+  ]);
 
-  function clickType(t: FacilityType) {
-    // Clicking the active button reverts to "All" — a familiar toggle
-    // pattern that saves a separate "clear" affordance.
-    setType((current) => (current === t ? '' : t));
-    setPage(1);
+  useRegisterRefresh(load);
+
+  const activeFilterCount = inMasters
+    ? (q ? 1 : 0) + (mastersFilter.siteId ? 1 : 0) + (mastersFilter.buildingId ? 1 : 0) + (type ? 1 : 0)
+    : (q ? 1 : 0) + (siteId !== '' ? 1 : 0) + (type ? 1 : 0);
+
+  const [savingId, setSavingId] = useState<number | null>(null);
+  async function toggleStatus(row: Facility, on: boolean) {
+    const next: 0 | 1 = on ? 1 : 0;
+    if (row.status === next) return;
+    setSavingId(row.id);
+    setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, status: next } : r)));
+    try {
+      await facilitiesApi.update(row.id, { status: next });
+    } catch (err) {
+      setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, status: row.status } : r)));
+      const msg = (err as { response?: { data?: { msg?: string } } })?.response?.data?.msg
+        || (err as Error)?.message || 'Failed to update status';
+      alert(msg);
+    } finally {
+      setSavingId(null);
+    }
   }
 
-  function clearAllFilters() {
-    setType('');
-    setSiteId('');
-    setQ('');
-    setPage(1);
-  }
+  const displayRows: FacilityRow[] = useMemo(
+    () => rows.map((r, i) => ({ ...r, _sno: (page - 1) * pageSize + i + 1 })),
+    [rows, page, pageSize],
+  );
 
-  const columns: GridColDef<Facility>[] = [
+  const columns: GridColDef<FacilityRow>[] = [
+    { field: '_sno', headerName: 'S.No', width: 80, sortable: false, filterable: false },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
-    { field: 'type', headerName: 'Type', width: 120 },
-    { field: 'site_name', headerName: 'Site', width: 130 },
-    { field: 'floor_name', headerName: 'Floor', width: 120 },
-    { field: 'capacity', headerName: 'Capacity', width: 80, align: 'right', headerAlign: 'right' },
     {
-      field: 'requires_approval', headerName: 'Approval', width: 100,
+      field: 'type', headerName: 'Type', width: 140,
+      valueGetter: (_v, row) => TYPE_LABEL[row.type as FacilityType] || row.type,
+    },
+    { field: 'site_name', headerName: 'Site', width: 150 },
+    { field: 'floor_name', headerName: 'Floor', width: 130 },
+    { field: 'capacity', headerName: 'Capacity', width: 90 },
+    {
+      field: 'requires_approval', headerName: 'Approval', width: 110,
       renderCell: (p) => p.row.requires_approval
         ? <Chip size="small" color="warning" label="required" />
         : <Chip size="small" label="auto" />,
     },
     {
-      field: 'status', headerName: 'Status', width: 90,
-      renderCell: (p) => <Chip size="small" color={p.row.status ? 'success' : 'default'} label={p.row.status ? 'active' : 'inactive'} />,
+      field: 'status', headerName: 'Status', width: 140, sortable: false,
+      renderCell: (p) => {
+        const isActive = p.row.status === 1;
+        return (
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Switch
+              size="small"
+              checked={isActive}
+              disabled={savingId === p.row.id}
+              onChange={(_e, on) => toggleStatus(p.row, on)}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <Typography
+              variant="caption"
+              sx={{ color: isActive ? 'success.main' : 'text.secondary', fontWeight: 500 }}
+            >
+              {isActive ? 'Active' : 'Inactive'}
+            </Typography>
+          </Stack>
+        );
+      },
     },
   ];
+
+  const editBase = inMasters ? '/admin/masters/facilities' : '/admin/facilities';
 
   return (
     <Box>
       <PageHeader
-        title="Facilities" subtitle="Bookable rooms, gyms, desks" onRefresh={load}
-        addLabel="New facility" onAdd={() => navigate('/admin/facilities/new')}
-      />
-
-      <Paper sx={{ p: 2, mb: 2 }}>
-        {/* ----- Primary: type buttons -----
-            One button per type the tenant actually has, plus "All" first.
-            The active button gets the filled "contained" variant; others
-            stay outlined so the choice is unambiguous at a glance. */}
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-          <Button
-            size="small"
-            variant={type === '' ? 'contained' : 'outlined'}
-            onClick={() => { setType(''); setPage(1); }}
-          >
-            All
-          </Button>
-          {availableTypes.map((t) => {
-            const active = type === t;
-            return (
-              <Button
-                key={t}
-                size="small"
-                variant={active ? 'contained' : 'outlined'}
-                color={active ? 'primary' : 'inherit'}
-                onClick={() => clickType(t)}
-                sx={{ textTransform: 'none' }}
-              >
-                {TYPE_LABEL[t] || t}
-                <Chip
-                  size="small"
-                  label={typeCounts[t] || 0}
-                  sx={{
-                    ml: 1, height: 18, fontSize: 11,
-                    bgcolor: active ? 'primary.dark' : 'action.hover',
-                    color: active ? 'primary.contrastText' : 'text.secondary',
-                  }}
-                />
-              </Button>
-            );
-          })}
-
-          {/* Empty-state hint for tenants that don't have any facilities
-              yet — keeps the row from looking awkwardly blank. */}
-          {availableTypes.length === 0 && (
-            <Typography variant="caption" color="text.secondary">
-              No facilities yet — click "New facility" to add the first one.
-            </Typography>
-          )}
-
-          {/* Spacer pushes the "More filters" toggle to the right edge of
-              the row on wide screens; on mobile it wraps below the buttons. */}
-          <Box sx={{ flexGrow: 1, minWidth: 0 }} />
-
-          <Button
-            size="small"
-            variant="text"
-            color="inherit"
-            startIcon={<TuneOutlinedIcon fontSize="small" />}
-            endIcon={moreOpen ? <KeyboardArrowUpIcon fontSize="small" /> : <KeyboardArrowDownIcon fontSize="small" />}
-            onClick={() => setMoreOpen((v) => !v)}
-            sx={{ textTransform: 'none' }}
-          >
-            More filters
-            {moreFilterCount > 0 && (
-              <Chip
-                size="small"
-                color="primary"
-                label={moreFilterCount}
-                sx={{ ml: 1, height: 18, fontSize: 11 }}
-              />
-            )}
-          </Button>
-        </Stack>
-
-        {/* ----- Secondary: collapsible Search + Site -----
-            Hidden by default. Animates open via maxHeight transition so
-            the table doesn't jump abruptly. */}
-        <Box
-          sx={{
-            overflow: 'hidden',
-            transition: 'max-height 0.25s ease, opacity 0.2s ease, margin-top 0.2s ease',
-            maxHeight: moreOpen ? 200 : 0,
-            opacity: moreOpen ? 1 : 0,
-            mt: moreOpen ? 1.5 : 0,
+        title="Facilities"
+        subtitle="Bookable rooms, gyms, desks"
+        addLabel="New facility"
+        onAdd={() => navigate(`${editBase}/new`)}
+      >
+        <FilterPopover
+          count={activeFilterCount}
+          onOpen={() => {
+            setDraftQ(q);
+            setDraftType(type);
+            if (inMasters) {
+              setDraftSiteId(mastersFilter.siteId ?? '');
+              setDraftBuildingId(mastersFilter.buildingId ?? '');
+            } else {
+              setDraftSiteId(siteId);
+              setDraftBuildingId('');
+            }
+          }}
+          onApply={() => {
+            setQ(draftQ);
+            setType(draftType);
+            if (inMasters) {
+              mastersFilter.setSiteId(draftSiteId === '' ? null : draftSiteId);
+              mastersFilter.setBuildingId(draftBuildingId === '' ? null : draftBuildingId);
+            } else {
+              setSiteId(draftSiteId);
+            }
+            setPage(1);
+          }}
+          onClear={() => {
+            setDraftQ(''); setDraftSiteId(''); setDraftBuildingId(''); setDraftType('');
+            setQ(''); setType('');
+            if (inMasters) mastersFilter.setSiteId(null);
+            else           setSiteId('');
+            setPage(1);
           }}
         >
-          <Stack
-            direction={{ xs: 'column', md: 'row' }}
-            spacing={2}
-            sx={{ pt: 0.5 }}
+          <TextField
+            label="Search" size="small"
+            value={draftQ} onChange={(e) => setDraftQ(e.target.value)}
+            placeholder="Facility name"
+            autoFocus
+          />
+          <TextField
+            select size="small" label="Site"
+            value={draftSiteId}
+            onChange={(e) => {
+              const v = e.target.value ? Number(e.target.value) : '';
+              setDraftSiteId(v);
+              // Site change invalidates any drafted building.
+              setDraftBuildingId('');
+            }}
           >
-            <SearchInput
-              value={q}
-              onChange={(v) => { setQ(v); setPage(1); }}
-              placeholder="Search by name…"
-              className="min-w-[240px]"
-            />
+            <MenuItem value="">All sites</MenuItem>
+            {sites.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+          </TextField>
+          {inMasters && (
             <TextField
-              select size="small" label="Site" sx={{ minWidth: 220 }}
-              value={siteId}
-              onChange={(e) => { setSiteId(e.target.value ? Number(e.target.value) : ''); setPage(1); }}
+              select size="small" label="Building"
+              value={draftBuildingId}
+              disabled={!draftSiteId}
+              onChange={(e) => setDraftBuildingId(e.target.value ? Number(e.target.value) : '')}
             >
-              <MenuItem value="">All sites</MenuItem>
-              {sites.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+              <MenuItem value="">All buildings</MenuItem>
+              {buildings.map((b) => <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>)}
             </TextField>
-            {moreFilterCount > 0 && (
-              <Button
-                size="small" variant="text" color="inherit"
-                onClick={clearAllFilters}
-                sx={{ alignSelf: { md: 'center' }, textTransform: 'none' }}
-              >
-                Clear filters
-              </Button>
-            )}
-          </Stack>
-        </Box>
-      </Paper>
+          )}
+          <TextField
+            select size="small" label="Type"
+            value={draftType}
+            onChange={(e) => setDraftType(e.target.value as '' | FacilityType)}
+          >
+            <MenuItem value="">All types</MenuItem>
+            {TYPE_ORDER.map((t) => <MenuItem key={t} value={t}>{TYPE_LABEL[t]}</MenuItem>)}
+          </TextField>
+        </FilterPopover>
 
-      <CrudTable<Facility>
-        rows={rows} columns={columns} loading={loading} getRowId={(r) => r.id}
+        <Button
+          variant="outlined"
+          disabled={exporting}
+          startIcon={exporting ? <CircularProgress size={14} /> : <FileDownloadIcon />}
+          onClick={exportToExcel}
+        >
+          {exporting ? 'Exporting…' : 'Download Excel'}
+        </Button>
+      </PageHeader>
+
+      <CrudTable<FacilityRow>
+        rows={displayRows} columns={columns} loading={loading}
+        emptyMessage="No facilities yet."
+        emptyHint="Add a facility to make it bookable."
+        getRowId={(r) => r.id}
         rowCount={total} page={page} pageSize={pageSize}
         onPageChange={(p, ps) => { setPage(p); setPageSize(ps); }}
-        onEdit={(row) => navigate(`/admin/facilities/${row.id}`)}
+        onEdit={(row) => navigate(`${editBase}/${row.id}`)}
         onDelete={async (row) => { await facilitiesApi.remove(row.id); load(); }}
       />
     </Box>
   );
- }
-// (() => {
-//     return (q ? 1 : 0) + (siteId !== '' ? 1 : 0);
-//   }, [q, siteId]);
-
-//   function clickType(t: FacilityType) {
-//     setType((current) => (current === t ? '' : t));
-//     setPage(1);
-//   }
-
-//   function clearAllFilters() {
-//     setType('');
-//     setSiteId('');
-//     setQ('');
-//     setPage(1);
-//   }
-
-//   const columns: GridColDef<Facility>[] = [
-//     { field: 'id', headerName: 'ID', width: 80 },
-//     { field: 'tenant_name', headerName: 'Tenant', width: 180,
-//       valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
-//     { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
-//     { field: 'type', headerName: 'Type', width: 140 },
-//     { field: 'site_name', headerName: 'Site', width: 180 },
-//     { field: 'floor_name', headerName: 'Floor', width: 160 },
-//     { field: 'capacity', headerName: 'Capacity', width: 100, align: 'right', headerAlign: 'right' },
-//     {
-//       field: 'requires_approval', headerName: 'Approval', width: 110,
-//       renderCell: (p) => p.row.requires_approval
-//         ? <Chip size="small" color="warning" label="required" />
-//         : <Chip size="small" label="auto" />,
-//     },
-//     {
-//       field: 'status', headerName: 'Status', width: 110,
-//       renderCell: (p) => <Chip size="small" color={p.row.status ? 'success' : 'default'} label={p.row.status ? 'active' : 'inactive'} />,
-//     },
-//   ];
-
-//   return (
-//     <Box>
-//       <PageHeader
-//         title="Facilities" subtitle="Bookable rooms, gyms, desks" onRefresh={load}
-//         addLabel="New facility" onAdd={() => navigate('/admin/facilities/new')}
-//       />
-
-//       <Paper sx={{ p: 2, mb: 2 }}>
-//         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-//           <Button
-//             size="small"
-//             variant={type === '' ? 'contained' : 'outlined'}
-//             onClick={() => { setType(''); setPage(1); }}
-//           >
-//             All
-//           </Button>
-//           {availableTypes.map((t) => {
-//             const active = type === t;
-//             return (
-//               <Button
-//                 key={t}
-//                 size="small"
-//                 variant={active ? 'contained' : 'outlined'}
-//                 color={active ? 'primary' : 'inherit'}
-//                 onClick={() => clickType(t)}
-//                 sx={{ textTransform: 'none' }}
-//               >
-//                 {TYPE_LABEL[t] || t}
-//                 <Chip
-//                   size="small"
-//                   label={typeCounts[t] || 0}
-//                   sx={{
-//                     ml: 1, height: 18, fontSize: 11,
-//                     bgcolor: active ? 'primary.dark' : 'action.hover',
-//                     color: active ? 'primary.contrastText' : 'text.secondary',
-//                   }}
-//                 />
-//               </Button>
-//             );
-//           })}
-
-//           {availableTypes.length === 0 && (
-//             <Typography variant="caption" color="text.secondary">
-//               No facilities yet — click "New facility" to add the first one.
-//             </Typography>
-//           )}
-
-//           <Box sx={{ flexGrow: 1, minWidth: 0 }} />
-
-//           <Button
-//             size="small"
-//             variant="text"
-//             color="inherit"
-//             startIcon={<TuneOutlinedIcon fontSize="small" />}
-//             endIcon={moreOpen ? <KeyboardArrowUpIcon fontSize="small" /> : <KeyboardArrowDownIcon fontSize="small" />}
-//             onClick={() => setMoreOpen((v) => !v)}
-//             sx={{ textTransform: 'none' }}
-//           >
-//             More filters
-//             {moreFilterCount > 0 && (
-//               <Chip
-//                 size="small"
-//                 color="primary"
-//                 label={moreFilterCount}
-//                 sx={{ ml: 1, height: 18, fontSize: 11 }}
-//               />
-//             )}
-//           </Button>
-//         </Stack>
-
-//         <Box
-//           sx={{
-//             overflow: 'hidden',
-//             transition: 'max-height 0.25s ease, opacity 0.2s ease, margin-top 0.2s ease',
-//             maxHeight: moreOpen ? 200 : 0,
-//             opacity: moreOpen ? 1 : 0,
-//             mt: moreOpen ? 1.5 : 0,
-//           }}
-//         >
-//           <Stack
-//             direction={{ xs: 'column', md: 'row' }}
-//             spacing={2}
-//             sx={{ pt: 0.5 }}
-//           >
-//             <TextField
-//               size="small" label="Search by name" sx={{ minWidth: 240 }}
-//               value={q}
-//               onChange={(e) => { setQ(e.target.value); setPage(1); }}
-//             />
-//             <TextField
-//               select size="small" label="Site" sx={{ minWidth: 220 }}
-//               value={siteId}
-//               onChange={(e) => { setSiteId(e.target.value ? Number(e.target.value) : ''); setPage(1); }}
-//             >
-//               <MenuItem value="">All sites</MenuItem>
-//               {sites.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
-//             </TextField>
-//             {moreFilterCount > 0 && (
-//               <Button
-//                 size="small" variant="text" color="inherit"
-//                 onClick={clearAllFilters}
-//                 sx={{ alignSelf: { md: 'center' }, textTransform: 'none' }}
-//               >
-//                 Clear filters
-//               </Button>
-//             )}
-//           </Stack>
-//         </Box>
-//       </Paper>
-
-//       <CrudTable<Facility>
-//         rows={rows} columns={columns} loading={loading} getRowId={(r) => r.id}
-//         rowCount={total} page={page} pageSize={pageSize}
-//         onPageChange={(p, ps) => { setPage(p); setPageSize(ps); }}
-//         onEdit={(row) => navigate(`/admin/facilities/${row.id}`)}
-//         onDelete={async (row) => { await facilitiesApi.remove(row.id); load(); }}
-//       />
-//     </Box>
-//   );
-// }
-//    {sites.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
-//             </TextField>
-//             {moreFilterCount > 0 && (
-//               <Button
-//                 size="small" variant="text" color="inherit"
-//                 onClick={clearAllFilters}
-//                 sx={{ alignSelf: { md: 'center' }, textTransform: 'none' }}
-//               >
-//                 Clear filters
-//               </Button>
-//             )}
-//           </Stack>
-//         </Box>
-//       </Paper>
-
-//       <CrudTable<Facility>
-//         rows={rows} columns={columns} loading={loading} getRowId={(r) => r.id}
-//         rowCount={total} page={page} pageSize={pageSize}
-//         onPageChange={(p, ps) => { setPage(p); setPageSize(ps); }}
-//         onEdit={(row) => navigate(`/admin/facilities/${row.id}`)}
-//         onDelete={async (row) => { await facilitiesApi.remove(row.id); load(); }}
-//       />
-//     </Box>
-//   );
-// }
+}

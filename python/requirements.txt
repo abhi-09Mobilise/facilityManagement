@@ -1,0 +1,10 @@
+# Mask R-CNN worker deps. Install with:
+#   python -m pip install -r requirements.txt
+#
+# CPU-only is fine for development; a CUDA build of torch will be picked
+# up automatically if you install one instead of the stock wheel.
+
+torch>=2.1
+torchvision>=0.16
+Pillow>=10.0
+numpy>=1.24

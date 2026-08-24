@@ -31,7 +31,7 @@ export function RequireRole({ roles, children }: {
   if (!roles.includes(user.role)) {
     const home =
       user.role === 'super_admin' ? '/admin/tenants'
-      : user.role === 'tenant_admin' ? '/admin/sites'
+      : user.role === 'tenant_admin' ? '/admin/masters/sites'
       : '/facility';
     return <Navigate to={home} replace />;
   }

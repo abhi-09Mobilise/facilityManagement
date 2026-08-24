@@ -10,6 +10,8 @@ router.use('/tenants', require('../modules/tenants/tenants.routes'));
 router.use('/lookups', require('../modules/lookups/lookups.routes'));
 
 // Tenant-admin owned (super_admin can target any tenant)
+router.use('/organisations',      require('../modules/organisations/organisations.routes'));
+router.use('/buildings',          require('../modules/buildings/buildings.routes'));
 router.use('/users',              require('../modules/users/users.routes'));
 router.use('/sites',              require('../modules/sites/sites.routes'));
 router.use('/floors',             require('../modules/floors/floors.routes'));

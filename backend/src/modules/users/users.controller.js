@@ -7,6 +7,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { issueToken } = require('../../utils/passwordResetTokens');
 const mailer = require('../../utils/mailer');
 const { tenantName } = require('../../utils/mailRecipients');
+const { scopeOrgWhere } = require('../../utils/orgScope');
 
 const intOrNull = (v) =>
   (v === undefined || v === null || v === '') ? null
@@ -14,10 +15,17 @@ const intOrNull = (v) =>
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Role catalog (kept in one place). After migration 020 the enum is:
-//   super_admin | tenant_admin | approver | employee
-const VALID_ROLES = ['super_admin', 'tenant_admin', 'approver', 'employee'];
-const TENANT_ADMIN_ASSIGNABLE = ['employee', 'approver'];
+// Role catalog (kept in one place). After migration 039 the enum is:
+//   super_admin | tenant_admin | org_admin | approver | employee
+const VALID_ROLES = ['super_admin', 'tenant_admin', 'org_admin', 'approver', 'employee'];
+const TENANT_ADMIN_ASSIGNABLE = ['employee', 'approver', 'org_admin'];
+// org_admins can only create employees or approvers within their org.
+const ORG_ADMIN_ASSIGNABLE = ['employee', 'approver'];
+
+// Roles for which is_approver must be flipped on automatically. Extending
+// migration 020's rule to cover org_admin / tenant_admin / super_admin who
+// can all sit on facility approval chains.
+const APPROVER_ROLES = new Set(['approver', 'org_admin', 'tenant_admin', 'super_admin']);
 
 function effectiveTenantId(req, fallback) {
   if (req.user.role === 'super_admin') {
@@ -55,6 +63,14 @@ exports.list = asyncHandler(async function (req, res) {
     params.push(req.user.tenant_id);
   }
 
+  // Org scoping — users.organisation_id is nullable (super_admins have none)
+  // so the filter kicks in only when the caller is org-scoped.
+  const orgScope = scopeOrgWhere(req, 'u.organisation_id');
+  if (orgScope.sql) {
+    where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...orgScope.params);
+  }
+
   // Free-text search: username, full name (name + lname), email, designation.
   // LIKE wildcards in the user's q are escaped so typing '%' / '_' doesn't
   // explode the WHERE clause.
@@ -85,13 +101,14 @@ exports.list = asyncHandler(async function (req, res) {
   ))[0].cnt;
 
   const rows = await query(
-    'SELECT u.id, u.tenant_id, u.username, u.name, u.lname, u.email, u.mobile, ' +
+    'SELECT u.id, u.tenant_id, u.organisation_id, u.username, u.name, u.lname, u.email, u.mobile, ' +
     '       u.designation, u.role, u.status, u.is_approved, u.is_approver, u.created_at, ' +
     '       u.department_id, u.site_id, ' +
-    '       d.name AS department_name, s.name AS site_name ' +
+    '       d.name AS department_name, s.name AS site_name, o.name AS organisation_name ' +
     '  FROM `users` u ' +
     '  LEFT JOIN `departments` d ON d.id = u.department_id ' +
     '  LEFT JOIN `sites`       s ON s.id = u.site_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = u.organisation_id ' +
     ' WHERE ' + whereSql +
     ' ORDER BY u.id DESC ' +
     ` LIMIT ${limit} OFFSET ${offset}`,
@@ -121,13 +138,53 @@ exports.create = asyncHandler(async function (req, res) {
   if (!VALID_ROLES.includes(requestedRole)) {
     return fail(res, 'role must be one of: ' + VALID_ROLES.join(', '), 422);
   }
-  if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(requestedRole)) {
+  // Role assignment matrix:
+  //   super_admin  → any role
+  //   tenant_admin → org_admin | approver | employee (not tenant_admin, not super_admin)
+  //   org_admin    → approver  | employee (never siblings or above)
+  if (req.user.role === 'org_admin') {
+    if (!ORG_ADMIN_ASSIGNABLE.includes(requestedRole)) {
+      return fail(res, 'org_admin cannot create ' + requestedRole + ' users', 403);
+    }
+  } else if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(requestedRole)) {
     return fail(res, 'Only super admins can create ' + requestedRole + ' users', 403);
   }
-  // Promoting to 'approver' implies the is_approver flag (used by chain-step
-  // approver-eligibility queries). Keep the column mirrored for backwards
-  // compatibility.
-  const isApproverFlag = requestedRole === 'approver' ? 1 : (b.is_approver ? 1 : 0);
+  // Any role that can appear on approval chains needs is_approver = 1 so the
+  // chain-step eligibility queries pick them up. Body flag is honoured only
+  // for plain employees (chain rows that don't require the flag).
+  const isApproverFlag = APPROVER_ROLES.has(requestedRole) ? 1 : (b.is_approver ? 1 : 0);
+
+  // organisation_id resolution:
+  //   org_admin  → always their own org (never body)
+  //   others     → body-provided, must belong to the tenant (validated below)
+  //                super_admin creating a super_admin can pass null
+  let organisationId;
+  if (req.user.role === 'org_admin') {
+    organisationId = req.user.organisation_id || null;
+    if (organisationId === null) {
+      return fail(res, 'Caller has no organisation', 400);
+    }
+  } else if (requestedRole === 'super_admin') {
+    // super_admins are tenant-less and org-less
+    organisationId = null;
+  } else {
+    organisationId = intOrNull(b.organisation_id);
+    if (organisationId === null && tenantId !== null) {
+      // Fall back to the tenant's Default org so pre-org clients keep working.
+      const def = await query(
+        "SELECT id FROM `organisations` WHERE tenant_id = ? AND slug = 'default' AND trash = 0 LIMIT 1",
+        [tenantId]
+      );
+      if (def.length > 0) organisationId = def[0].id;
+    }
+    if (organisationId !== null && tenantId !== null) {
+      const okOrg = await query(
+        'SELECT id FROM `organisations` WHERE id = ? AND tenant_id = ? AND trash = 0 LIMIT 1',
+        [organisationId, tenantId]
+      );
+      if (okOrg.length === 0) return fail(res, 'organisation_id is not valid for this tenant', 422);
+    }
+  }
 
   // Validate department + site belong to the same tenant
   const deptId = intOrNull(b.department_id);
@@ -151,11 +208,11 @@ exports.create = asyncHandler(async function (req, res) {
   const hash = await bcrypt.hash(password, 10);
   const r = await execute(
     'INSERT INTO `users` ' +
-    '   (tenant_id, department_id, site_id, username, password, name, lname, email, mobile, ' +
+    '   (tenant_id, organisation_id, department_id, site_id, username, password, name, lname, email, mobile, ' +
     '    designation, role, status, is_approved, is_approver, trash) ' +
-    ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+    ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
     [
-      tenantId, deptId, siteId,
+      tenantId, organisationId, deptId, siteId,
       username, hash,
       b.name || null, b.lname || null,
       b.email || null, b.mobile || null,
@@ -200,7 +257,7 @@ exports.update = asyncHandler(async function (req, res) {
   if (b.email && !EMAIL_RE.test(b.email)) return fail(res, 'Email is not valid', 422);
 
   const target = (await query(
-    'SELECT id, tenant_id, role FROM `users` WHERE id = ? AND trash = 0 LIMIT 1',
+    'SELECT id, tenant_id, organisation_id, role FROM `users` WHERE id = ? AND trash = 0 LIMIT 1',
     [id]
   ))[0];
   if (!target) return fail(res, 'User not found', 404);
@@ -208,7 +265,15 @@ exports.update = asyncHandler(async function (req, res) {
   if (req.user.role !== 'super_admin' && target.tenant_id !== req.user.tenant_id) {
     return fail(res, 'Forbidden', 403);
   }
-  if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(target.role)) {
+  // org_admin: extra scoping — target must live in the same org.
+  if (req.user.role === 'org_admin') {
+    if (target.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden', 403);
+    }
+    if (!ORG_ADMIN_ASSIGNABLE.includes(target.role)) {
+      return fail(res, 'org_admin cannot modify ' + target.role + ' users', 403);
+    }
+  } else if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(target.role)) {
     return fail(res, 'Only super admins can modify admins', 403);
   }
 
@@ -218,14 +283,18 @@ exports.update = asyncHandler(async function (req, res) {
     if (!VALID_ROLES.includes(b.role)) {
       return fail(res, 'role must be one of: ' + VALID_ROLES.join(', '), 422);
     }
-    if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(b.role)) {
+    if (req.user.role === 'org_admin') {
+      if (!ORG_ADMIN_ASSIGNABLE.includes(b.role)) {
+        return fail(res, 'org_admin cannot assign ' + b.role + ' role', 403);
+      }
+    } else if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(b.role)) {
       return fail(res, 'Only super admins can assign ' + b.role + ' role', 403);
     }
     newRole = b.role;
   }
   // Mirror is_approver from effective role (null = leave alone).
   const effectiveRole = newRole || target.role;
-  const isApproverPatch = effectiveRole === 'approver' ? 1 : intOrNull(b.is_approver);
+  const isApproverPatch = APPROVER_ROLES.has(effectiveRole) ? 1 : intOrNull(b.is_approver);
 
   const deptId = intOrNull(b.department_id);
   const siteId = intOrNull(b.site_id);
@@ -271,12 +340,13 @@ exports.getOne = asyncHandler(async function (req, res) {
   if (id === null) return fail(res, 'Invalid id', 400);
 
   const rows = await query(
-    'SELECT u.id, u.tenant_id, u.department_id, u.site_id, u.username, u.name, u.lname, ' +
+    'SELECT u.id, u.tenant_id, u.organisation_id, u.department_id, u.site_id, u.username, u.name, u.lname, ' +
     '       u.email, u.mobile, u.designation, u.role, u.status, u.is_approved, u.is_approver, u.created_at, ' +
-    '       d.name AS department_name, s.name AS site_name ' +
+    '       d.name AS department_name, s.name AS site_name, o.name AS organisation_name ' +
     '  FROM `users` u ' +
     '  LEFT JOIN `departments` d ON d.id = u.department_id ' +
     '  LEFT JOIN `sites`       s ON s.id = u.site_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = u.organisation_id ' +
     ' WHERE u.id = ? AND u.trash = 0 LIMIT 1',
     [id]
   );
@@ -284,6 +354,10 @@ exports.getOne = asyncHandler(async function (req, res) {
   const row = rows[0];
 
   if (req.user.role !== 'super_admin' && row.tenant_id !== req.user.tenant_id) {
+    return fail(res, 'Forbidden', 403);
+  }
+  // org_admin can only see users in their own org
+  if (req.user.role === 'org_admin' && row.organisation_id !== req.user.organisation_id) {
     return fail(res, 'Forbidden', 403);
   }
 
@@ -304,6 +378,13 @@ exports.approvers = asyncHandler(async function (req, res) {
   } else {
     where.push('u.tenant_id = ?');
     params.push(req.user.tenant_id);
+  }
+
+  // Org scoping — approvers pickers should respect org boundaries too.
+  const orgScope = scopeOrgWhere(req, 'u.organisation_id');
+  if (orgScope.sql) {
+    where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...orgScope.params);
   }
 
   // Optional cascade filters used by the per-facility chain editor:
@@ -369,7 +450,7 @@ exports.remove = asyncHandler(async function (req, res) {
   if (id === null) return fail(res, 'id is required', 422);
 
   const target = (await query(
-    'SELECT id, tenant_id, role FROM `users` WHERE id = ? AND trash = 0 LIMIT 1',
+    'SELECT id, tenant_id, organisation_id, role FROM `users` WHERE id = ? AND trash = 0 LIMIT 1',
     [id]
   ))[0];
   if (!target) return fail(res, 'User not found', 404);
@@ -377,7 +458,14 @@ exports.remove = asyncHandler(async function (req, res) {
   if (req.user.role !== 'super_admin' && target.tenant_id !== req.user.tenant_id) {
     return fail(res, 'Forbidden', 403);
   }
-  if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(target.role)) {
+  if (req.user.role === 'org_admin') {
+    if (target.organisation_id !== req.user.organisation_id) {
+      return fail(res, 'Forbidden', 403);
+    }
+    if (!ORG_ADMIN_ASSIGNABLE.includes(target.role)) {
+      return fail(res, 'org_admin cannot delete ' + target.role + ' users', 403);
+    }
+  } else if (req.user.role !== 'super_admin' && !TENANT_ADMIN_ASSIGNABLE.includes(target.role)) {
     return fail(res, 'Only super admins can delete admins', 403);
   }
 

@@ -61,6 +61,7 @@ app.use(errorHandler);
 
 app.listen(config.port, () => {
   console.log(`FM API listening on http://localhost:${config.port} (${config.nodeEnv})`);
+  console.log('[boot] DB config -> host=' + config.db.host + ' port=' + config.db.port + ' user=' + config.db.user + ' db=' + config.db.database);
   // Probe SMTP so the operator knows whether outbound mail will work.
   mailer.verifyConnection();
   // F02 - start the check-out sweeper (every 5 minutes by default).

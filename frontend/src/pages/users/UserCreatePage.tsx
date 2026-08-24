@@ -14,10 +14,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, Divider, FormControlLabel, MenuItem, Paper,
-  Radio, RadioGroup, Stack, Switch, TextField, Tooltip, Typography,
+  Alert, Box, Button, CircularProgress, Divider, FormControlLabel, IconButton,
+  InputAdornment, MenuItem, Paper, Radio, RadioGroup, Stack, Switch, TextField,
+  Tooltip, Typography,
 } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import GroupsIcon from '@mui/icons-material/Groups';
 import PersonIcon from '@mui/icons-material/Person';
 import { useNavigate } from 'react-router-dom';
@@ -74,6 +77,8 @@ export default function UserCreatePage() {
   const [loadingDepts, setLoadingDepts] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPwd, setShowPwd] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   // Load Sites once.
   useEffect(() => {
@@ -294,13 +299,43 @@ export default function UserCreatePage() {
                 </Stack>
 
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                  <TextField required type="password" label="Password" fullWidth
+                  <TextField required type={showPwd ? 'text' : 'password'} label="Password" fullWidth
                     value={form.password} onChange={bind('password')}
                     inputProps={{ autoComplete: 'new-password' }}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            edge="end"
+                            aria-label={showPwd ? 'Hide password' : 'Show password'}
+                            onClick={() => setShowPwd((v) => !v)}
+                            onMouseDown={(e) => e.preventDefault()}
+                          >
+                            {showPwd ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
                     helperText="Minimum 6 characters" />
-                  <TextField required type="password" label="Confirm password" fullWidth
+                  <TextField required type={showConfirm ? 'text' : 'password'} label="Confirm password" fullWidth
                     value={form.confirmPassword} onChange={bind('confirmPassword')}
-                    inputProps={{ autoComplete: 'new-password' }} />
+                    inputProps={{ autoComplete: 'new-password' }}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            edge="end"
+                            aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                            onClick={() => setShowConfirm((v) => !v)}
+                            onMouseDown={(e) => e.preventDefault()}
+                          >
+                            {showConfirm ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }} />
                 </Stack>
 
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>

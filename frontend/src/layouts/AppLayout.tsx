@@ -17,14 +17,19 @@
 //
 // Masters auto-expands when any of its children is the active route.
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Suspense } from 'react';
+import PageSpinner from '@/components/PageSpinner';
 import {
   Menu, LogOut, Building2, Users, Building, Layers,
   Sparkles, UsersRound, UtensilsCrossed, CalendarCheck, FolderCheck, BookOpen,
-  X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee,
+  X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee, Network,
+  Warehouse, RefreshCw, Boxes,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { RefreshProvider, useRefresh } from '@/context/RefreshContext';
+import { TenantScopeProvider, useTenantScope } from '@/context/TenantScopeContext';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
@@ -32,7 +37,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Role } from '@/types';
+import type { Organisation, Role, Tenant } from '@/types';
 
 interface NavItem {
   to: string;
@@ -60,13 +65,21 @@ const PLATFORM: NavItem[] = [
 ];
 
 const MASTERS: NavItem[] = [
-  { to: '/admin/sites',       label: 'Sites',       icon: <Building className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/floors',      label: 'Floors',      icon: <Layers className="h-4 w-4" />,           roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/facilities',  label: 'Facilities',  icon: <Sparkles className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/departments', label: 'Departments', icon: <UsersRound className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/users',       label: 'Employees',   icon: <Users className="h-4 w-4" />,            roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/meal-times',  label: 'Meal times',  icon: <UtensilsCrossed className="h-4 w-4" />,  roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/pantries',    label: 'Pantries',    icon: <Coffee className="h-4 w-4" />,           roles: ['super_admin', 'tenant_admin'] }, // F06
+  // Phase B — hierarchy pages live under the shared /admin/masters/* shell
+  // (tabs + cascade filter). Legacy /admin/<segment> URLs are still routed
+  // for deep-link compatibility but the sidebar now points at the shell.
+  { to: '/admin/masters/organisations', label: 'Organisations', icon: <Network className="h-4 w-4" />,        roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/masters/sites',         label: 'Sites',         icon: <Building className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/masters/buildings',     label: 'Buildings',     icon: <Warehouse className="h-4 w-4" />,      roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/masters/floors',        label: 'Floors',        icon: <Layers className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/masters/facilities',    label: 'Facilities',    icon: <Sparkles className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/floor-3d',              label: '3D Studio',     icon: <Boxes className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin', 'org_admin'] },
+  // Departments / Users / Meal times / Pantries are NOT part of the tabbed
+  // shell — they still open on their own pages.
+  { to: '/admin/departments',           label: 'Departments',   icon: <UsersRound className="h-4 w-4" />,     roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/users',                 label: 'Employees',     icon: <Users className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/meal-times',            label: 'Meal times',    icon: <UtensilsCrossed className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/pantries',              label: 'Pantries',      icon: <Coffee className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] }, // F06
 ];
 
 const BOOKING: NavItem[] = [
@@ -81,6 +94,7 @@ const BOOKING: NavItem[] = [
 const ROLE_LABEL: Record<Role, string> = {
   super_admin:  'Super admin',
   tenant_admin: 'Tenant admin',
+  org_admin:    'Org admin',
   approver:     'Approver',
   employee:     'Employee',
 };
@@ -88,6 +102,7 @@ const ROLE_LABEL: Record<Role, string> = {
 const ROLE_CHIP_CLASS: Record<Role, string> = {
   super_admin:  'bg-white/20 text-white',
   tenant_admin: 'bg-emerald-400/30 text-white',
+  org_admin:    'bg-sky-400/30 text-white',
   approver:     'bg-amber-400/30 text-white',
   employee:     'bg-white/15 text-white',
 };
@@ -97,8 +112,20 @@ const SIDEBAR_W = 248;
 
 // Global back button shown above every page's children (hidden on role-home routes).
 import BackButton from '@/components/BackButton';
+import { tenantsApi } from '@/api/tenants.api';
+import { organisationsApi } from '@/api/organisations.api';
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+export default function AppLayout() {
+  return (
+    <TenantScopeProvider>
+      <RefreshProvider>
+        <AppLayoutInner />
+      </RefreshProvider>
+    </TenantScopeProvider>
+  );
+}
+
+function AppLayoutInner() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -108,6 +135,63 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   // route; otherwise admins can toggle it.
   const isMasterActive = MASTERS.some((m) => location.pathname.startsWith(m.to));
   const [mastersOpen, setMastersOpen] = useState(isMasterActive);
+
+  // Navbar-level Tenant + Organisation scope pickers.
+  //   super_admin  → picks a tenant, then an org within that tenant
+  //   tenant_admin → tenant is fixed to their JWT; only picks an org
+  //   others       → no pickers rendered
+  //
+  // The picked values live in TenantScopeContext (session-persisted, cascading);
+  // this component just owns the dropdown option lists.
+  const isSuper       = user?.role === 'super_admin';
+  const isTenantAdmin = user?.role === 'tenant_admin';
+  const showTenantPicker = !!isSuper;
+  const showOrgPicker    = !!(isSuper || isTenantAdmin);
+
+  const scope = useTenantScope();
+
+  const [tenants, setTenants]    = useState<Tenant[]>([]);
+  const [organisations, setOrgs] = useState<Organisation[]>([]);
+
+  // Load the tenant list once for super_admin. tenant_admin never needs it
+  // (their tenant is on the JWT).
+  useEffect(() => {
+    if (!showTenantPicker) return;
+    tenantsApi.list({ limit: 500 })
+      .then((r) => {
+        const list = (r.data?.data || []) as Tenant[];
+        setTenants(list);
+        // On first load, if scope has no tenant yet, default to the first one
+        // so the org picker + downstream pages have a scope to work with.
+        if (list.length > 0 && scope.tenantId === null) {
+          scope.setTenantId(list[0].id);
+        }
+      })
+      .catch(() => setTenants([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTenantPicker]);
+
+  // Load orgs whenever the effective tenant changes.
+  //   super_admin: uses scope.tenantId (from context)
+  //   tenant_admin: uses user.tenant_id (fixed, JWT)
+  useEffect(() => {
+    if (!showOrgPicker) return;
+    const effectiveTenantId = isTenantAdmin ? user?.tenant_id : scope.tenantId;
+    if (!effectiveTenantId) { setOrgs([]); return; }
+    organisationsApi.list({ limit: 500, tenant_id: effectiveTenantId })
+      .then((r) => {
+        const list = (r.data?.data || []) as Organisation[];
+        setOrgs(list);
+        // Auto-pick the first org if none currently selected so consumers
+        // always have a scope. Cascade from tenantId change already wiped
+        // organisationId, so this fires cleanly on tenant switch.
+        if (list.length > 0 && scope.organisationId === null) {
+          scope.setOrganisationId(list[0].id);
+        }
+      })
+      .catch(() => setOrgs([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOrgPicker, isTenantAdmin, scope.tenantId, user?.tenant_id]);
 
   if (!user) return null;
 
@@ -237,6 +321,45 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             {brandTitle}
           </span>
 
+          <NavbarRefreshButton />
+
+          {/* Navbar scope pickers.
+              super_admin  → Tenant + Organisation
+              tenant_admin → Organisation only (their tenant is fixed) */}
+          <div className="hidden md:flex items-center gap-2 shrink-0">
+            {showTenantPicker && (
+              <select
+                aria-label="Tenant"
+                title="Tenant"
+                className="h-8 rounded border border-white/30 bg-white/95 px-2 text-sm text-slate-900 min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-white/40"
+                value={scope.tenantId ?? ''}
+                onChange={(e) => scope.setTenantId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">All tenants</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            )}
+            {showOrgPicker && (
+              <select
+                aria-label="Organisation"
+                title="Organisation"
+                className="h-8 rounded border border-white/30 bg-white/95 px-2 text-sm text-slate-900 min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-white/40 disabled:opacity-50"
+                value={scope.organisationId ?? ''}
+                onChange={(e) => scope.setOrganisationId(e.target.value ? Number(e.target.value) : null)}
+                disabled={organisations.length === 0}
+              >
+                <option value="">
+                  {organisations.length === 0 ? 'No organisations' : 'All organisations'}
+                </option>
+                {organisations.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <span
             className={cn(
               'hidden sm:inline-flex shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold',
@@ -318,8 +441,34 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         className="min-w-0 overflow-x-hidden p-3 sm:p-4 md:p-6"
         style={{ paddingTop: HEADER_H + 16 }}
       >
-        <div className="md:ml-[248px]"><BackButton />{children}</div>
+        <div className="md:ml-[248px]">
+          <BackButton />
+          {/* Scoped Suspense: navbar + sidebar stay put while a
+              lazy route chunk downloads. Only the outlet spins. */}
+          <Suspense fallback={<PageSpinner />}>
+            <Outlet />
+          </Suspense>
+        </div>
       </main>
     </div>
+  );
+}
+
+// Sits in the header, invokes whichever page has registered a refresh
+// handler via useRegisterRefresh(). Hidden until a page opts in so it
+// doesn't confuse the user on pages that don't support it.
+function NavbarRefreshButton() {
+  const { canRefresh, trigger } = useRefresh();
+  if (!canRefresh) return null;
+  return (
+    <button
+      type="button"
+      onClick={trigger}
+      aria-label="Refresh"
+      title="Refresh"
+      className="shrink-0 p-2 rounded hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/40"
+    >
+      <RefreshCw className="h-5 w-5" />
+    </button>
   );
 }

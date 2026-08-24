@@ -79,8 +79,9 @@ export default function MyBookingsPage() {
     for (const b of bookings) {
       const start = parseDt(b.start_at);
       const end = parseDt(b.end_at);
-      const isPast = end ? end.getTime() < today : false;
+      const isPast = b.status === 'cancelled' || b.status === 'rejected' || (end ? end.getTime() < today : false);
       if (isPast) pa.push(b); else up.push(b);
+      
       if (b.status === 'pending') pendingCount++;
       if (start && start.getTime() >= today && start.getTime() <= weekOut
           && b.status !== 'cancelled' && b.status !== 'rejected') {
