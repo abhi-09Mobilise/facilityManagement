@@ -517,18 +517,24 @@ function AppLayoutInner() {
 }
 
 // Sits in the header, invokes whichever page has registered a refresh
-// handler via useRegisterRefresh(). Hidden until a page opts in so it
-// doesn't confuse the user on pages that don't support it.
+// handler via useRegisterRefresh(). Always rendered (not conditionally
+// mounted) so its slot in the header keeps a constant width and the
+// surrounding elements don't shift when navigating between pages that
+// do vs don't opt into refresh. Disabled + dimmed when no page has
+// registered a handler.
 function NavbarRefreshButton() {
   const { canRefresh, trigger } = useRefresh();
-  if (!canRefresh) return null;
   return (
     <button
       type="button"
       onClick={trigger}
+      disabled={!canRefresh}
       aria-label="Refresh"
-      title="Refresh"
-      className="shrink-0 p-2 rounded hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/40"
+      title={canRefresh ? 'Refresh' : 'Refresh not available on this page'}
+      className={cn(
+        'shrink-0 p-2 rounded focus:outline-none focus:ring-2 focus:ring-white/40',
+        canRefresh ? 'hover:bg-white/10' : 'opacity-30 cursor-not-allowed'
+      )}
     >
       <RefreshCw className="h-5 w-5" />
     </button>
