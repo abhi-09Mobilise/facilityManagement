@@ -103,6 +103,10 @@
      line — no component edits needed. Bump to 13px / 15px to taste. */
   html {
     font-size: 14px;
+    /* Always reserve space for the vertical scrollbar so the viewport
+       width stays constant when content height changes across route
+       transitions. Prevents horizontal jitter of the header/sidebar. */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground;

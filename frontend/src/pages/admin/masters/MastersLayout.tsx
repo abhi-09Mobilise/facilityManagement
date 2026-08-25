@@ -14,9 +14,11 @@
 // (session-persisted, cascading) state remains available to every child
 // page via useMastersFilter() / useMastersFilterOptional().
 
+import { Suspense } from 'react';
 import { Box, Paper, Tab, Tabs } from '@mui/material';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
+import PageSpinner from '@/components/PageSpinner';
 import { MastersFilterProvider } from '@/contexts/MastersFilterContext';
 
 // Ordered list of tabs. The `segment` matches the URL under /admin/masters/.
@@ -68,7 +70,9 @@ function MastersShell() {
         </Tabs>
       </Paper>
 
-      <Outlet />
+      <Suspense fallback={<PageSpinner />}>
+        <Outlet />
+      </Suspense>
     </Box>
   );
 }
