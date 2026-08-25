@@ -18,12 +18,35 @@ export default {
       // Brand palette. Navy mirrors what the LoginPage was already using
       // hard-coded; the rest of the scale is shadcn's neutral set wired to
       // CSS variables so theme overrides are easy later.
+      fontFamily: {
+        display: ['"Space Grotesk"', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+        sans:    ['"IBM Plex Sans"', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+        mono:    ['"IBM Plex Mono"', 'ui-monospace', '"SF Mono"', 'Menlo', 'Consolas', 'monospace'],
+      },
+      boxShadow: {
+        card: '0 1px 2px rgba(15,27,45,.06), 0 6px 20px -8px rgba(15,27,45,.12)',
+      },
       colors: {
+        // SoCampus Desk prototype palette (source of truth: UI prototype HTML)
+        ink:   { DEFAULT: '#0F1B2D', 2: '#172640' },
+        paper: '#F2F4F8',
+        line:  { DEFAULT: '#E2E6EE', 2: '#CBD2DE' },
+        inktext: '#1C2433',
+        mutedx: '#667089',
+        faint:  '#98A2B8',
+        indigo: { DEFAULT: '#3657E8', soft: '#E7ECFF', ink: '#1E3AB5' },
+        teal:   { DEFAULT: '#0E8C7F', soft: '#DCF3EE', ink: '#0A6B61' },
+        amber:  { DEFAULT: '#D98A0B', soft: '#FFF0D3', ink: '#9A6100' },
+        coral:  { DEFAULT: '#D8432A', soft: '#FBE4DF', ink: '#A42E1B' },
+        violet: { DEFAULT: '#7A3BE8', soft: '#EFE6FF' },
+        // Legacy brand aliases -> remapped to the new palette so every
+        // existing `bg-brand-navy` / `bg-brand-surface` class restyles
+        // itself without touching page markup.
         brand: {
-          navy:        '#1a3a6e',
-          'navy-dark': '#142e57',
-          'navy-soft': 'rgba(26, 58, 110, 0.08)',
-          surface:     '#eef2f7',
+          navy:        '#0F1B2D',                 // was #1a3a6e -> ink
+          'navy-dark': '#172640',                 // -> ink-2
+          'navy-soft': 'rgba(54, 87, 232, 0.10)', // -> indigo tint
+          surface:     '#F2F4F8',                 // -> paper
         },
         // shadcn-style semantic tokens. The actual values live in globals.css
         // as HSL CSS variables so we can theme without touching the config.

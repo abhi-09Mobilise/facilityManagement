@@ -27,17 +27,17 @@
   .page-header       { @apply flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6; }
   .page-section      { @apply mb-6 sm:mb-8; }
 
-  /* ---------- panels / cards ---------- */
-  .panel             { @apply bg-card border rounded-lg shadow-sm; }
+  /* ---------- panels / cards (prototype .card) ---------- */
+  .panel             { @apply bg-card border border-line rounded-xl shadow-card; }
   .panel-pad         { @apply p-4 sm:p-5; }
-  .panel-header      { @apply flex items-center justify-between gap-3 pb-3 mb-3 border-b; }
+  .panel-header      { @apply flex items-center justify-between gap-3 pb-3 mb-3 border-b border-line; }
 
-  /* ---------- KPI tiles ---------- */
+  /* ---------- KPI tiles (prototype .kpi) ---------- */
   .kpi-grid          { @apply grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4; }
   .kpi-tile          { @apply panel panel-pad flex flex-col gap-1; }
-  .kpi-label         { @apply text-xs uppercase tracking-wide text-muted-foreground font-medium; }
-  .kpi-value         { @apply text-2xl sm:text-3xl font-bold text-primary leading-none; }
-  .kpi-sub           { @apply text-xs text-muted-foreground; }
+  .kpi-label         { @apply text-[11px] uppercase tracking-[.1em] text-mutedx font-semibold; }
+  .kpi-value         { @apply font-display text-2xl sm:text-3xl font-bold text-inktext leading-none tracking-tight; }
+  .kpi-sub           { @apply text-xs text-mutedx; }
 
   /* ---------- form rows ---------- */
   .form-grid         { @apply grid grid-cols-1 md:grid-cols-2 gap-4; }
@@ -54,21 +54,21 @@
   .data-table tbody tr            { @apply flex flex-col sm:table-row border-b sm:border-b-0; }
   .data-table tbody tr td         { @apply flex justify-between sm:table-cell before:content-[attr(data-label)] before:font-semibold before:text-muted-foreground before:mr-3 before:uppercase before:text-xs sm:before:hidden; }
 
-  /* ---------- pill chips ---------- */
-  .chip              { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold; }
-  .chip-pending      { @apply chip bg-amber-100 text-amber-800; }
-  .chip-approved     { @apply chip bg-emerald-100 text-emerald-800; }
-  .chip-rejected     { @apply chip bg-red-100 text-red-800; }
-  .chip-cancelled    { @apply chip bg-slate-200 text-slate-700; }
-  .chip-checkin      { @apply chip bg-blue-100 text-blue-800; }
-  .chip-checkout     { @apply chip bg-violet-100 text-violet-800; }
-  .chip-info         { @apply chip bg-blue-50 text-blue-700; }
-  .chip-muted        { @apply chip bg-muted text-muted-foreground; }
+  /* ---------- pill chips (prototype .tag: soft bg + ink text + dot) ---------- */
+  .chip              { @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap; }
+  .chip-pending      { @apply chip bg-amber-soft text-amber-ink; }
+  .chip-approved     { @apply chip bg-teal-soft text-teal-ink; }
+  .chip-rejected     { @apply chip bg-coral-soft text-coral-ink; }
+  .chip-cancelled    { @apply chip bg-[#EDF0F5] text-mutedx; }
+  .chip-checkin      { @apply chip bg-indigo-soft text-indigo-ink; }
+  .chip-checkout     { @apply chip bg-violet-soft text-[#5B27B8]; }
+  .chip-info         { @apply chip bg-indigo-soft text-indigo-ink; }
+  .chip-muted        { @apply chip bg-[#EDF0F5] text-mutedx; }
 
-  /* ---------- tabs ---------- */
-  .tabs-bar          { @apply flex gap-2 sm:gap-6 border-b text-sm overflow-x-auto; }
-  .tab-btn           { @apply px-3 py-2 border-b-2 border-transparent text-muted-foreground whitespace-nowrap hover:text-foreground transition-colors; }
-  .tab-btn-active    { @apply tab-btn border-primary text-primary font-semibold; }
+  /* ---------- tabs (prototype .tabs) ---------- */
+  .tabs-bar          { @apply flex gap-1 border-b border-line text-sm overflow-x-auto; }
+  .tab-btn           { @apply px-3 py-2 -mb-px border-b-2 border-transparent font-medium text-mutedx whitespace-nowrap hover:text-foreground transition-colors; }
+  .tab-btn-active    { @apply tab-btn border-indigo text-indigo-ink font-semibold; }
 
   /* ---------- empty state ---------- */
   .empty-state       { @apply panel panel-pad text-center text-sm text-muted-foreground py-10; }

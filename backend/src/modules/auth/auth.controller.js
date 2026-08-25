@@ -38,6 +38,7 @@ exports.login = asyncHandler(async function (req, res) {
     return fail(res, 'Username and password are required', 422);
   }
 
+ 
   const rows = await query(
     'SELECT u.id, u.tenant_id, u.organisation_id, u.department_id, u.username, u.name, u.lname, u.email, u.password, u.role, ' +
     '       u.status, u.trash, u.is_approved, u.login_attempts, u.login_clear_datetime, ' +
@@ -50,7 +51,7 @@ exports.login = asyncHandler(async function (req, res) {
     [username, username]
   );
 
-  
+  console.log(rows)
 
   if (rows.length === 0) return fail(res, 'Invalid credentials', 401);
   const user = rows[0];

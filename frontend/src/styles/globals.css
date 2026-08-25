@@ -14,36 +14,54 @@
  */
 @layer base {
   :root {
-    --background:            0 0% 100%;
-    --foreground:            222 47% 11%;
+    /* ============================================================
+       SoCampus Desk design tokens (from the approved UI prototype)
+       Raw hex tokens for direct use in CSS + component styles.
+       ============================================================ */
+    --ink:        #0F1B2D;  --ink-2:      #172640;
+    --paper:      #F2F4F8;  --line:       #E2E6EE;  --line-2: #CBD2DE;
+    --text:       #1C2433;  --muted-x:    #667089;  --faint:  #98A2B8;
+    --indigo:     #3657E8;  --indigo-soft:#E7ECFF;  --indigo-ink:#1E3AB5;
+    --teal:       #0E8C7F;  --teal-soft:  #DCF3EE;  --teal-ink:  #0A6B61;
+    --amber:      #D98A0B;  --amber-soft: #FFF0D3;  --amber-ink: #9A6100;
+    --coral:      #D8432A;  --coral-soft: #FBE4DF;  --coral-ink: #A42E1B;
+    --violet:     #7A3BE8;  --violet-soft:#EFE6FF;
+    --font-display: 'Space Grotesk', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-body:    'IBM Plex Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --shadow-card:  0 1px 2px rgba(15, 27, 45, .06), 0 6px 20px -8px rgba(15, 27, 45, .12);
+
+    /* shadcn semantic tokens, remapped to the SoCampus palette (HSL) */
+    --background:            222 25% 96%;   /* paper #F2F4F8 */
+    --foreground:            219 24% 15%;   /* text  #1C2433 */
 
     --card:                  0 0% 100%;
-    --card-foreground:       222 47% 11%;
+    --card-foreground:       219 24% 15%;
 
     --popover:               0 0% 100%;
-    --popover-foreground:    222 47% 11%;
+    --popover-foreground:    219 24% 15%;
 
-    /* Primary = brand navy (#1a3a6e ~ hsl(216 62% 26%)) */
-    --primary:               216 62% 26%;
+    /* Primary = prototype indigo #3657E8 */
+    --primary:               229 80% 56%;
     --primary-foreground:    0 0% 100%;
 
-    --secondary:             216 14% 96%;
-    --secondary-foreground:  222 47% 11%;
+    --secondary:             222 25% 96%;
+    --secondary-foreground:  219 24% 15%;
 
-    --muted:                 216 14% 96%;
-    --muted-foreground:      215 16% 47%;
+    --muted:                 222 25% 96%;
+    --muted-foreground:      224 14% 47%;   /* #667089 */
 
-    --accent:                216 14% 96%;
-    --accent-foreground:     222 47% 11%;
+    --accent:                228 100% 95%;  /* indigo-soft #E7ECFF */
+    --accent-foreground:     229 76% 41%;   /* indigo-ink  #1E3AB5 */
 
-    --destructive:           0 72% 51%;
+    --destructive:           9 68% 51%;     /* coral #D8432A */
     --destructive-foreground: 0 0% 100%;
 
-    --border:                214 20% 90%;
-    --input:                 214 20% 90%;
-    --ring:                  216 62% 26%;
+    --border:                220 26% 91%;   /* line #E2E6EE */
+    --input:                 219 21% 80%;   /* line-2 #CBD2DE */
+    --ring:                  229 80% 56%;
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;                      /* 12px, prototype --r */
   }
 
   .dark {
@@ -88,6 +106,16 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-body);
     font-feature-settings: 'rlig' 1, 'calt' 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Headings use the display face (Space Grotesk), matching the prototype */
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  code, kbd, .font-mono {
+    font-family: var(--font-mono);
   }
 }

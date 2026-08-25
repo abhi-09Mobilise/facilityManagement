@@ -66,11 +66,12 @@ const TYPE_ORDER: FacilityType[] = [
 ];
 
 const STATUS_COLOR: Record<BookingStatus, string> = {
-  approved:  '#1a3a6e',
-  pending:   '#f59e0b',
-  rejected:  '#94a3b8',
-  cancelled: '#cbd5e1',
-  completed: '#10b981',
+  // SoCampus Desk token palette (prototype): indigo / amber / faint / line-2 / teal
+  approved:  '#3657E8',
+  pending:   '#D98A0B',
+  rejected:  '#98A2B8',
+  cancelled: '#CBD2DE',
+  completed: '#0E8C7F',
 };
 const STATUS_LABEL: Record<BookingStatus, string> = {
   approved:  'Approved',
@@ -128,7 +129,7 @@ const TIMELINE_CSS = `
   .fm-tl .rct-dateHeader-primary { color: hsl(var(--foreground)); font-weight: 600; }
   .fm-tl .rct-item { border: 0 !important; padding: 0 !important; overflow: hidden; }
   .fm-tl .rct-item:hover { z-index: 5 !important; }
-  .fm-tl .rct-today-marker { background: #dc2626 !important; width: 2px !important; }
+  .fm-tl .rct-today-marker { background: #D8432A !important; width: 2px !important; }
   .fm-tl .rct-cursor-line { z-index: 4 !important; }
   .fm-tl .rct-horizontal-lines .rct-hl-odd,
   .fm-tl .rct-horizontal-lines .rct-hl-even { z-index: 1 !important; }
@@ -697,7 +698,7 @@ export default function GanttTimeline() {
           <i className="inline-block w-3 h-3 rounded" style={{ background: STATUS_COLOR.rejected }} /> Rejected
         </span>
         <span className="flex items-center gap-1">
-          <i className="inline-block w-[2px] h-3" style={{ background: '#dc2626' }} /> Now
+          <i className="inline-block w-[2px] h-3" style={{ background: '#D8432A' }} /> Now
         </span>
         {/* Heatmap colour-scale legend: green (free) → yellow (busy) → red (full). */}
         <span className="flex items-center gap-1">
@@ -833,7 +834,7 @@ function BookingDetailsModal({ item, facilityName, onClose }: {
 //           <i className="inline-block w-3 h-3 rounded" style={{ background: STATUS_COLOR.rejected }} /> Rejected
 //         </span>
 //         <span className="flex items-center gap-1">
-//           <i className="inline-block w-[2px] h-3" style={{ background: '#dc2626' }} /> Now
+//           <i className="inline-block w-[2px] h-3" style={{ background: '#D8432A' }} /> Now
 //         </span>
 //         <span className="flex items-center gap-1">
 //           <i className="inline-block w-3 h-3" style={{ background: 'linear-gradient(to right, rgba(15,23,42,0.05), rgba(15,23,42,0.55))' }} />

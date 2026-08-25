@@ -1,26 +1,34 @@
-// Login page - split-panel layout, now Tailwind + shadcn instead of MUI.
+// Login page — SoCampus Desk prototype theme.
 //
-// Visual parity with the previous MUI version:
-//   - Left (>= md):  navy brand panel with the FMS title + tagline +
-//                    SVG city illustration with floating icon chips.
-//   - Right (always): white form panel with building badge, "Welcome
-//                    Back!" heading, icon-prefixed inputs, password eye
-//                    toggle, Forgot link, Login button, "or" Contact
-//                    Administrator footer.
-// Behaviour preserved: login(), error formatting, ?next= deep-link bounce.
+// Layout mirrors SoCampus_Login.html exactly:
+//   - Left (>= md): ink brand panel — logo, feature badges, headline,
+//                   desk-state grid motif (the floor-map legend as art).
+//   - Right (always): white card — Sign in heading, inputs with focus ring,
+//                     password eye toggle, remember-me, Forgot link, button.
+// Behaviour preserved from the previous version: login(), error formatting,
+// ?next= deep-link bounce, /forgot-password and /register routes.
 
 import { useState } from 'react';
-import {
-  Building2, User as UserIcon, Lock, Eye, EyeOff,
-  Zap, Wrench, Droplet, ShieldCheck, ClipboardCheck,
-} from 'lucide-react';
+import { Building2, Eye, EyeOff, User as UserIcon, Lock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+
+// Desk-state motif cells: teal outline = free, indigo = checked-in,
+// indigo tint = booked, amber tint = pending, hatch = blocked.
+const MOTIF: Array<'free' | 'in' | 'book' | 'pend' | 'blk'> = [
+  'in', 'free', 'book', 'free', 'pend', 'free',
+  'free', 'in', 'free', 'blk', 'free', 'book',
+  'book', 'free', 'in', 'free', 'free', 'pend',
+];
+
+const MOTIF_CLASS: Record<string, string> = {
+  free: 'border-teal bg-transparent',
+  in:   'border-indigo bg-indigo',
+  book: 'border-indigo bg-indigo/30',
+  pend: 'border-amber bg-amber/25',
+  blk:  'border-white/25 bg-[repeating-linear-gradient(45deg,rgba(255,255,255,.16),rgba(255,255,255,.16)_2px,transparent_2px,transparent_5px)]',
+};
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -55,198 +63,171 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-brand-surface md:p-6">
-      <div className={cn(
-        'w-full max-w-[1100px] bg-white overflow-hidden',
-        'flex flex-col md:flex-row',
-        'min-h-screen md:min-h-[620px]',
-        'md:rounded-2xl md:shadow-[0_12px_40px_rgba(20,46,87,0.12)]'
-      )}>
-        {/* ---------------- LEFT: navy brand panel ---------------- */}
-        <div className="hidden md:flex md:basis-1/2 md:flex-col relative bg-brand-navy text-white p-10">
-          <h1 className="text-4xl font-extrabold leading-tight mb-2">
-            Facility<br />Management<br />System
-          </h1>
-          <p className="text-base opacity-80">
-            Smart facilities. Seamless management.
-          </p>
+    <div className="grid min-h-screen grid-cols-1 md:grid-cols-2 bg-paper">
+      {/* ---------------- LEFT: ink brand panel ---------------- */}
+      <aside className="relative hidden md:flex flex-col justify-between overflow-hidden bg-ink p-12 text-white">
+        {/* radial glows, as in the prototype */}
+        <div
+          className="pointer-events-none absolute -right-36 -bottom-44 h-[460px] w-[460px] rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(54,87,232,.5), transparent 65%)' }}
+        />
+        <div
+          className="pointer-events-none absolute -left-32 -top-40 h-[380px] w-[380px] rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(14,140,127,.35), transparent 65%)' }}
+        />
 
-          <div className="mt-auto relative flex justify-center min-h-[340px]">
-            <CityIllustration />
-            <FloatingIcon top="12%" left="48%"><Wrench className="h-5 w-5 text-brand-navy" /></FloatingIcon>
-            <FloatingIcon top="40%" left="14%"><Zap className="h-5 w-5 text-brand-navy" /></FloatingIcon>
-            <FloatingIcon top="38%" right="14%"><Droplet className="h-5 w-5 text-brand-navy" /></FloatingIcon>
-            <FloatingIcon top="70%" left="8%"><ShieldCheck className="h-5 w-5 text-brand-navy" /></FloatingIcon>
-            <FloatingIcon top="68%" right="20%"><ClipboardCheck className="h-5 w-5 text-brand-navy" /></FloatingIcon>
+        <div className="relative z-[1] flex items-center gap-3">
+          <div className="grid h-[38px] w-[38px] place-items-center rounded-[11px] border border-white/[.18] bg-white/10">
+            <Building2 className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="font-display text-[19px] font-bold tracking-tight">SoCampus Desk</div>
+            <div className="text-xs text-[#8FA0BA]">Workplace booking · Mobilise App Lab</div>
           </div>
         </div>
 
-        {/* ---------------- RIGHT: form panel ---------------- */}
-        <div className="flex flex-col justify-center basis-full md:basis-1/2 p-8 md:p-12">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-brand-navy-soft">
-            <Building2 className="h-8 w-8 text-brand-navy" />
+        <div className="relative z-[1] max-w-[420px]">
+          <div className="mb-3.5 flex flex-wrap gap-2">
+            {['QR check-in', 'Auto-release', 'Live floor maps', 'Approvals'].map((b) => (
+              <span
+                key={b}
+                className="rounded-full border border-white/[.16] bg-white/[.06] px-3 py-1 text-[11.5px] font-medium text-[#DCE3F0]"
+              >
+                {b}
+              </span>
+            ))}
           </div>
-
-          <h2 className="text-center text-3xl font-extrabold text-brand-navy mb-1">
-            OpsSphere!
-          </h2>
-          <p className="text-center text-sm text-muted-foreground mb-8">
-            Login to continue to your account
+          <h1 className="font-display text-[34px] font-bold leading-[1.15] tracking-tight">
+            Your desk knows when you've arrived.
+          </h1>
+          <p className="mt-3.5 text-[14.5px] text-[#B8C3D6]">
+            Book a desk near your team, check in with a scan, and let unused desks free
+            themselves. Facilities sees occupancy live.
           </p>
+          <div className="mt-8 grid w-max grid-cols-6 gap-2" aria-hidden>
+            {MOTIF.map((m, i) => (
+              <i key={i} className={cn('h-6 w-[34px] rounded-[5px] border-[1.4px]', MOTIF_CLASS[m])} />
+            ))}
+          </div>
+        </div>
 
-          <form onSubmit={handleSubmit} noValidate className="space-y-5">
-            <div className="space-y-1.5">
-              <Label htmlFor="username">Username</Label>
-              <div className="relative">
-                <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="username"
-                  required autoFocus
-                  placeholder="Enter your username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="pl-10"
-                />
+        <div className="relative z-[1] text-xs text-[#8FA0BA]">
+          Multi-tenant · role-based access · every booking audited
+        </div>
+      </aside>
+
+      {/* ---------------- RIGHT: form panel ---------------- */}
+      <main className="grid place-items-center p-6">
+        <div className="w-full max-w-[400px]">
+          <div className="rounded-2xl border border-line bg-card p-7 shadow-card">
+            {/* Mobile-only mini brand */}
+            <div className="mb-5 flex items-center gap-2.5 md:hidden">
+              <div className="grid h-[30px] w-[30px] place-items-center rounded-[9px] bg-ink text-white">
+                <Building2 className="h-4 w-4" />
               </div>
+              <div className="font-display text-[15px] font-bold">SoCampus Desk</div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="password"
-                  required
-                  type={showPwd ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10"
-                />
-                <button
-                  type="button"
-                  aria-label={showPwd ? 'Hide password' : 'Show password'}
-                  onClick={() => setShowPwd((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
+            <h2 className="font-display text-[21px] font-semibold tracking-tight">Sign in</h2>
+            <p className="mb-5 mt-1 text-[13px] text-mutedx">
+              Use your work account. Your role and location come from the directory.
+            </p>
 
             {error && (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
+              <div className="mb-4 rounded-[10px] bg-coral-soft px-3.5 py-2.5 text-[12.5px] text-coral-ink">
+                <b className="font-semibold">We couldn't sign you in.</b> {error}
               </div>
             )}
 
-            <div className="text-right">
-              <RouterLink
-                to="/forgot-password"
-                className="text-sm font-semibold text-brand-navy hover:underline"
+            <form onSubmit={handleSubmit} noValidate className="space-y-3.5">
+              <div className="space-y-1.5">
+                <label htmlFor="username" className="text-xs font-semibold text-mutedx">
+                  Username
+                </label>
+                <div className="relative">
+                  <UserIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
+                  <input
+                    id="username"
+                    required
+                    autoFocus
+                    autoComplete="username"
+                    placeholder="you@company.com"
+                    spellCheck={false}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full rounded-[10px] border border-line-2 bg-card py-2.5 pl-10 pr-3 text-sm outline-none transition-colors focus:border-indigo focus:ring-[3px] focus:ring-indigo-soft"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="password" className="text-xs font-semibold text-mutedx">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
+                  <input
+                    id="password"
+                    required
+                    type={showPwd ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full rounded-[10px] border border-line-2 bg-card py-2.5 pl-10 pr-11 text-sm outline-none transition-colors focus:border-indigo focus:ring-[3px] focus:ring-indigo-soft"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPwd ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowPwd((v) => !v)}
+                    className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-faint hover:bg-paper hover:text-inktext"
+                  >
+                    {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pb-1 pt-0.5">
+                <label className="flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-mutedx">
+                  <input type="checkbox" defaultChecked className="h-[15px] w-[15px] accent-indigo" />
+                  Keep me signed in
+                </label>
+                <RouterLink
+                  to="/forgot-password"
+                  className="text-[12.5px] font-medium text-indigo hover:underline"
+                >
+                  Forgot password?
+                </RouterLink>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-[10px] bg-indigo px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-ink disabled:cursor-wait disabled:opacity-60"
               >
-                Forgot Password?
-              </RouterLink>
+                {loading ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+
+            <div className="my-4 flex items-center gap-3 text-[11.5px] font-semibold uppercase tracking-[.08em] text-faint">
+              <span className="h-px flex-1 bg-line" />
+              or
+              <span className="h-px flex-1 bg-line" />
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading}
-              size="lg"
-              className="w-full text-base"
-            >
-              {loading ? 'Signing in...' : 'Login'}
-            </Button>
-
-            <div className="flex items-center gap-3 my-2">
-              <Separator className="flex-1" />
-              <span className="text-xs text-muted-foreground">or</span>
-              <Separator className="flex-1" />
-            </div>
-
-            <p className="text-center text-sm text-muted-foreground">
-              Need help?{' '}
-              <RouterLink to="/register" className="font-semibold text-brand-navy hover:underline">
-                Contact Administrator
+            <p className="text-center text-[12.5px] text-mutedx">
+              Need an account?{' '}
+              <RouterLink to="/register" className="font-medium text-indigo hover:underline">
+                Contact your administrator
               </RouterLink>
             </p>
-          </form>
+          </div>
+
+          <p className="mt-4 text-center text-xs text-faint">
+            Trouble signing in? Contact Workplace IT
+          </p>
         </div>
-      </div>
+      </main>
     </div>
-  );
-}
-
-// --------- presentational helpers ---------
-
-function FloatingIcon({ children, top, left, right }: {
-  children: React.ReactNode;
-  top?: string; left?: string; right?: string;
-}) {
-  return (
-    <div
-      className="absolute h-11 w-11 rounded-full bg-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,0,0,0.25)]"
-      style={{ top, left, right }}
-    >
-      {children}
-    </div>
-  );
-}
-
-// Inline SVG illustration. Same shapes as the MUI version - just sitting
-// inside a Tailwind container.
-function CityIllustration() {
-  return (
-    <svg viewBox="0 0 420 320" className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
-      <g fill="#3b5a8c" opacity="0.6">
-        <ellipse cx="60" cy="40" rx="22" ry="9" />
-        <ellipse cx="80" cy="48" rx="18" ry="7" />
-        <ellipse cx="350" cy="55" rx="24" ry="9" />
-        <ellipse cx="330" cy="62" rx="16" ry="6" />
-      </g>
-      <g fill="none" stroke="#6b8bbf" strokeWidth="1.5" strokeDasharray="3 5" opacity="0.55">
-        <path d="M 70 200 Q 210 30 350 200" />
-        <path d="M 90 240 Q 210 100 330 240" />
-      </g>
-      <g>
-        <rect x="180" y="90"  width="60"  height="180" fill="#cfe0f4" />
-        <rect x="190" y="100" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="100" width="10" height="12" fill="#5878a8" />
-        <rect x="190" y="125" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="125" width="10" height="12" fill="#5878a8" />
-        <rect x="190" y="150" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="150" width="10" height="12" fill="#5878a8" />
-        <rect x="190" y="175" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="175" width="10" height="12" fill="#5878a8" />
-        <rect x="190" y="200" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="200" width="10" height="12" fill="#5878a8" />
-        <rect x="190" y="225" width="10" height="12" fill="#5878a8" />
-        <rect x="210" y="225" width="10" height="12" fill="#5878a8" />
-        <rect x="100" y="160" width="80"  height="110" fill="#a9c4e6" />
-        <rect x="115" y="180" width="14" height="14" fill="#3b5a8c" />
-        <rect x="142" y="180" width="14" height="14" fill="#3b5a8c" />
-        <rect x="115" y="210" width="14" height="14" fill="#3b5a8c" />
-        <rect x="142" y="210" width="14" height="14" fill="#3b5a8c" />
-        <rect x="240" y="140" width="70"  height="130" fill="#a9c4e6" />
-        <rect x="252" y="160" width="14" height="14" fill="#3b5a8c" />
-        <rect x="280" y="160" width="14" height="14" fill="#3b5a8c" />
-        <rect x="252" y="190" width="14" height="14" fill="#3b5a8c" />
-        <rect x="280" y="190" width="14" height="14" fill="#3b5a8c" />
-        <rect x="252" y="220" width="14" height="14" fill="#3b5a8c" />
-        <rect x="280" y="220" width="14" height="14" fill="#3b5a8c" />
-        <rect x="310" y="200" width="55"  height="70"  fill="#cfe0f4" />
-        <rect x="320" y="215" width="10" height="10" fill="#5878a8" />
-        <rect x="340" y="215" width="10" height="10" fill="#5878a8" />
-        <rect x="320" y="235" width="10" height="10" fill="#5878a8" />
-        <rect x="340" y="235" width="10" height="10" fill="#5878a8" />
-      </g>
-      <g fill="#6b8bbf">
-        <circle cx="70"  cy="260" r="14" />
-        <circle cx="85"  cy="265" r="10" />
-        <circle cx="380" cy="265" r="12" />
-        <circle cx="395" cy="270" r="9"  />
-      </g>
-      <line x1="0" y1="270" x2="420" y2="270" stroke="#3b5a8c" strokeWidth="2" />
-    </svg>
   );
 }
