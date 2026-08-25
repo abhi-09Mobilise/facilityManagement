@@ -16,7 +16,7 @@ const pool = mysql.createPool({
   dateStrings: true,        // keep dates as strings — easier for JSON
   multipleStatements: false // safer default
 });
-
+console.log(pool)
 /**
  * Run a parameterised query and return rows.
  * @param {string} sql

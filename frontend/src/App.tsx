@@ -43,6 +43,8 @@ const PublicFacilityDetailPage  = lazy(() => import('@/pages/public/PublicFacili
 
 // --- Lazy: heavy admin dashboard (recharts ~95KB gz) --------------------
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
+const LiveOverviewPage = lazy(() => import('@/pages/overview/LiveOverviewPage'));
+const RolePermissionsPage = lazy(() => import('@/pages/admin/permissions/RolePermissionsPage'));
 
 // --- Lazy: booker pages -------------------------------------------------
 const FacilityBookingPage = lazy(() => import('@/pages/facility/FacilityBookingPage'));
@@ -99,8 +101,8 @@ function RoleHomeRedirect() {
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   const home =
-    user.role === 'super_admin'    ? '/dashboard'
-    : user.role === 'tenant_admin' ? '/dashboard'
+    user.role === 'super_admin'    ? '/overview'
+    : user.role === 'tenant_admin' ? '/overview'
     : user.role === 'approver'     ? '/approvals'
     :                                '/facility';
   return <Navigate to={home} replace />;
@@ -145,6 +147,12 @@ export default function App() {
               <Route index element={<RoleHomeRedirect />} />
 
               {/* Admin dashboards */}
+              <Route path="/overview" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><LiveOverviewPage /></RequireRole>
+              } />
+              <Route path="/admin/permissions" element={
+                <RequireRole roles={['super_admin', 'tenant_admin']}><RolePermissionsPage /></RequireRole>
+              } />
               <Route path="/dashboard" element={
                 <RequireRole roles={['super_admin', 'tenant_admin']}><DashboardPage /></RequireRole>
               } />

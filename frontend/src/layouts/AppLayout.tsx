@@ -25,7 +25,7 @@ import {
   Menu, LogOut, Building2, Users, Building, Layers,
   Sparkles, UsersRound, UtensilsCrossed, CalendarCheck, FolderCheck, BookOpen,
   X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee, Network,
-  Warehouse, RefreshCw, Boxes,
+  Warehouse, RefreshCw, Boxes, Activity, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { RefreshProvider, useRefresh } from '@/context/RefreshContext';
@@ -55,8 +55,15 @@ interface NavSection {
   items: NavItem[];
 }
 
+// Prototype nav: "Live overview" is the admin home; the legacy dashboard
+// (utilisation charts + Gantt) stays reachable as "Analytics".
 const DASHBOARD: NavItem = {
-  to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" />,
+  to: '/overview', label: 'Live overview', icon: <LayoutDashboard className="h-4 w-4" />,
+  roles: ['super_admin', 'tenant_admin'],
+};
+
+const ANALYTICS: NavItem = {
+  to: '/dashboard', label: 'Analytics', icon: <Activity className="h-4 w-4" />,
   roles: ['super_admin', 'tenant_admin'],
 };
 
@@ -80,6 +87,8 @@ const MASTERS: NavItem[] = [
   { to: '/admin/users',                 label: 'Employees',     icon: <Users className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin'] },
   { to: '/admin/meal-times',            label: 'Meal times',    icon: <UtensilsCrossed className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin'] },
   { to: '/admin/pantries',              label: 'Pantries',      icon: <Coffee className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] }, // F06
+  // Configurable RBAC — the prototype's Roles & access matrix, editable.
+  { to: '/admin/permissions',           label: 'Roles & permissions', icon: <ShieldCheck className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin'] },
 ];
 
 const BOOKING: NavItem[] = [
@@ -99,12 +108,22 @@ const ROLE_LABEL: Record<Role, string> = {
   employee:     'Employee',
 };
 
+// Prototype .tag styles: soft background + ink text per role.
 const ROLE_CHIP_CLASS: Record<Role, string> = {
-  super_admin:  'bg-white/20 text-white',
-  tenant_admin: 'bg-emerald-400/30 text-white',
-  org_admin:    'bg-sky-400/30 text-white',
-  approver:     'bg-amber-400/30 text-white',
-  employee:     'bg-white/15 text-white',
+  super_admin:  'bg-violet-soft text-[#5B27B8]',
+  tenant_admin: 'bg-teal-soft text-teal-ink',
+  org_admin:    'bg-indigo-soft text-indigo-ink',
+  approver:     'bg-amber-soft text-amber-ink',
+  employee:     'bg-[#EDF0F5] text-mutedx',
+};
+
+// Persona avatar colors, matching the prototype's people palette.
+const ROLE_AVATAR_BG: Record<Role, string> = {
+  super_admin:  '#7A3BE8',
+  tenant_admin: '#0E8C7F',
+  org_admin:    '#3657E8',
+  approver:     '#D98A0B',
+  employee:     '#3657E8',
 };
 
 const HEADER_H = 64;
@@ -205,13 +224,14 @@ function AppLayoutInner() {
 
   // Filter each NAV slot by role.
   const dashItem  = DASHBOARD.roles.includes(user.role) ? DASHBOARD : null;
+  const analyticsItem = ANALYTICS.roles.includes(user.role) ? ANALYTICS : null;
   const platform  = PLATFORM.filter((i) => i.roles.includes(user.role));
   const masters   = MASTERS.filter((i) => i.roles.includes(user.role));
   const booking   = BOOKING.filter((i) => i.roles.includes(user.role));
 
   const sections = useMemo<NavSection[]>(() => {
     const out: NavSection[] = [];
-    if (dashItem) out.push({ key: 'dashboard', items: [dashItem] });
+    if (dashItem) out.push({ key: 'dashboard', items: analyticsItem ? [dashItem, analyticsItem] : [dashItem] });
     if (platform.length > 0) out.push({ key: 'platform', label: 'Platform', items: platform });
     if (masters.length > 0) out.push({
       key: 'masters',
@@ -222,7 +242,7 @@ function AppLayoutInner() {
     });
     if (booking.length > 0) out.push({ key: 'booking', label: 'Booking', items: booking });
     return out;
-  }, [dashItem, platform, masters, booking]);
+  }, [dashItem, analyticsItem, platform, masters, booking]);
 
   const initials = (user.name?.[0] || user.username?.[0] || 'U').toUpperCase();
 
@@ -233,11 +253,11 @@ function AppLayoutInner() {
           to={n.to}
           onClick={() => setMobileOpen(false)}
           className={({ isActive }) => cn(
-            'flex items-center gap-3 py-2 text-sm transition-colors min-w-0',
-            opts.indent ? 'pl-10 pr-4' : 'px-4',
+            'flex items-center gap-2.5 py-2 text-[13.5px] font-medium rounded-[9px] transition-colors min-w-0',
+            opts.indent ? 'pl-9 pr-2.5' : 'px-2.5',
             isActive
-              ? 'bg-brand-navy-soft text-brand-navy font-semibold'
-              : 'text-foreground hover:bg-muted'
+              ? 'bg-indigo-soft text-indigo-ink [&_svg]:text-indigo'
+              : 'text-inktext hover:bg-paper [&_svg]:text-mutedx'
           )}
         >
           <span className="shrink-0">{n.icon}</span>
@@ -247,8 +267,37 @@ function AppLayoutInner() {
     );
   }
 
+  // Prototype rail: logo block + persona card + sectioned nav + status foot.
+  const railHeader = (
+    <>
+      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+        <div className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] bg-ink text-white">
+          <Building2 className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate font-display text-[15px] font-bold tracking-tight" title={brandTitle}>
+            {brandTitle}
+          </div>
+          <div className="text-[11px] font-medium text-mutedx">Workplace booking</div>
+        </div>
+      </div>
+      <div className="mx-3 mb-2 flex items-center gap-2.5 rounded-xl border border-line bg-[#FAFBFD] px-3 py-2.5">
+        <div
+          className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full font-display text-xs font-semibold text-white"
+          style={{ backgroundColor: ROLE_AVATAR_BG[user.role] }}
+        >
+          {initials}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-semibold">{user.name || user.username}</div>
+          <div className="truncate text-[11.5px] text-mutedx">{ROLE_LABEL[user.role]}</div>
+        </div>
+      </div>
+    </>
+  );
+
   const navList = (
-    <nav className="py-2">
+    <nav className="px-2.5 py-1">
       {sections.map((section) => {
         // Collapsible group (Masters).
         if (section.groupKey) {
@@ -259,8 +308,8 @@ function AppLayoutInner() {
                 type="button"
                 onClick={() => setMastersOpen((v) => !v)}
                 className={cn(
-                  'w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors',
-                  'text-foreground hover:bg-muted',
+                  'w-full flex items-center gap-2.5 px-2.5 py-2 text-[13.5px] font-medium rounded-[9px] transition-colors',
+                  'text-inktext hover:bg-paper [&_svg]:text-mutedx',
                   expanded && 'font-semibold'
                 )}
                 aria-expanded={expanded}
@@ -279,12 +328,12 @@ function AppLayoutInner() {
             </div>
           );
         }
-        // Static section (Platform / Booking) - same as before.
+        // Static section (Platform / Booking) with a prototype-style eyebrow.
         if (section.label) {
           return (
-            <div key={section.key} className="mb-2">
-              <div className="px-4 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground">
-                {section.label.toUpperCase()}
+            <div key={section.key} className="mb-1">
+              <div className="px-2.5 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[.1em] text-faint">
+                {section.label}
               </div>
               <ul>{section.items.map((it) => renderItem(it))}</ul>
             </div>
@@ -292,7 +341,7 @@ function AppLayoutInner() {
         }
         // Bare single-item section (Dashboard) - no header, no indent.
         return (
-          <ul key={section.key} className="mb-1">
+          <ul key={section.key} className="mb-1 pt-1">
             {section.items.map((it) => renderItem(it))}
           </ul>
         );
@@ -301,25 +350,30 @@ function AppLayoutInner() {
   );
 
   return (
-    <div className="min-h-screen bg-brand-surface overflow-x-hidden">
-      {/* ============ HEADER ============ */}
+    <div className="min-h-screen bg-paper overflow-x-hidden">
+      {/* ============ HEADER (prototype topbar: light, bordered) ============ */}
       <header
-        className="fixed top-0 inset-x-0 z-30 bg-brand-navy text-white shadow"
+        className="fixed top-0 inset-x-0 z-30 bg-card border-b border-line"
         style={{ height: HEADER_H }}
       >
-        <div className="h-full flex items-center gap-2 px-3 sm:px-4">
+        <div className="h-full flex items-center gap-2 px-3 sm:px-4 md:pl-[264px]">
           <button
             type="button"
-            className="md:hidden p-2 rounded hover:bg-white/10 shrink-0"
+            className="md:hidden grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-line bg-card text-inktext hover:bg-paper"
             onClick={() => setMobileOpen(true)}
             aria-label="Open menu"
           >
             <Menu className="h-5 w-5" />
           </button>
 
-          <span className="flex-1 min-w-0 text-base font-semibold truncate" title={brandTitle}>
+          {/* Brand shows here only on mobile; on md+ it lives in the rail */}
+          <span
+            className="md:hidden flex-1 min-w-0 font-display text-[15px] font-bold truncate"
+            title={brandTitle}
+          >
             {brandTitle}
           </span>
+          <span className="hidden md:block flex-1" />
 
           <NavbarRefreshButton />
 
@@ -331,7 +385,7 @@ function AppLayoutInner() {
               <select
                 aria-label="Tenant"
                 title="Tenant"
-                className="h-8 rounded border border-white/30 bg-white/95 px-2 text-sm text-slate-900 min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-white/40"
+                className="h-9 rounded-[9px] border border-line-2 bg-card px-2.5 text-[12.5px] font-medium text-inktext min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-indigo/30 focus:border-indigo"
                 value={scope.tenantId ?? ''}
                 onChange={(e) => scope.setTenantId(e.target.value ? Number(e.target.value) : null)}
               >
@@ -345,7 +399,7 @@ function AppLayoutInner() {
               <select
                 aria-label="Organisation"
                 title="Organisation"
-                className="h-8 rounded border border-white/30 bg-white/95 px-2 text-sm text-slate-900 min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-white/40 disabled:opacity-50"
+                className="h-9 rounded-[9px] border border-line-2 bg-card px-2.5 text-[12.5px] font-medium text-inktext min-w-[160px] max-w-[220px] focus:outline-none focus:ring-2 focus:ring-indigo/30 focus:border-indigo disabled:opacity-50"
                 value={scope.organisationId ?? ''}
                 onChange={(e) => scope.setOrganisationId(e.target.value ? Number(e.target.value) : null)}
                 disabled={organisations.length === 0}
@@ -362,10 +416,11 @@ function AppLayoutInner() {
 
           <span
             className={cn(
-              'hidden sm:inline-flex shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold',
+              'hidden sm:inline-flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded-full text-[11.5px] font-semibold',
               ROLE_CHIP_CLASS[user.role]
             )}
           >
+            <i className="h-1.5 w-1.5 rounded-full bg-current" />
             {ROLE_LABEL[user.role]}
           </span>
 
@@ -373,11 +428,16 @@ function AppLayoutInner() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="ml-1 rounded-full shrink-0 focus:outline-none focus:ring-2 focus:ring-white/40"
+                className="ml-1 rounded-full shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo/40"
                 aria-label="Account menu"
               >
-                <Avatar className="h-8 w-8 bg-white/15">
-                  <AvatarFallback className="bg-white/15 text-white">{initials}</AvatarFallback>
+                <Avatar className="h-[34px] w-[34px]">
+                  <AvatarFallback
+                    className="font-display text-xs font-semibold text-white"
+                    style={{ backgroundColor: ROLE_AVATAR_BG[user.role] }}
+                  >
+                    {initials}
+                  </AvatarFallback>
                 </Avatar>
               </button>
             </DropdownMenuTrigger>
@@ -393,17 +453,21 @@ function AppLayoutInner() {
         </div>
       </header>
 
-      {/* ============ SIDEBAR (md+) ============ */}
+      {/* ============ SIDEBAR (md+) — prototype rail: full height, brand on top ============ */}
       <aside
-        className="hidden md:block fixed left-0 z-20 border-r bg-white"
-        style={{ top: HEADER_H, bottom: 0, width: SIDEBAR_W }}
+        className="hidden md:flex md:flex-col fixed left-0 top-0 bottom-0 z-40 border-r border-line bg-card"
+        style={{ width: SIDEBAR_W }}
       >
+        {railHeader}
         {/* Sidebar stays scrollable in case the nav outgrows the viewport,
             but the scrollbar itself is hidden — cleaner look, matches the
-            mockup. Works in Chrome / Edge / Safari via ::-webkit-scrollbar
-            and Firefox via scrollbar-width:none. */}
-        <div className="h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            prototype. */}
+        <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {navList}
+        </div>
+        <div className="border-t border-line px-4 py-3 text-[11.5px] text-mutedx">
+          <span className="mr-1.5 inline-block h-[7px] w-[7px] rounded-full bg-teal shadow-[0_0_0_3px_#DCF3EE]" />
+          All systems operational
         </div>
       </aside>
 
@@ -415,14 +479,12 @@ function AppLayoutInner() {
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <aside className="md:hidden fixed inset-y-0 left-0 z-50 w-[248px] max-w-[85vw] bg-white shadow-xl flex flex-col">
-            <div
-              className="flex items-center justify-between px-4 border-b shrink-0"
-              style={{ height: HEADER_H }}
-            >
-              <span className="text-base font-bold truncate" title={brandTitle}>{brandTitle}</span>
+          <aside className="md:hidden fixed inset-y-0 left-0 z-50 w-[264px] max-w-[85vw] bg-card shadow-xl flex flex-col">
+            <div className="flex items-start justify-between shrink-0">
+              <div className="min-w-0 flex-1">{railHeader}</div>
               <Button
                 variant="ghost" size="icon"
+                className="m-2 shrink-0"
                 aria-label="Close menu"
                 onClick={() => setMobileOpen(false)}
               >

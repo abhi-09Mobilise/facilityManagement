@@ -36,6 +36,9 @@ router.use('/cron', require('../modules/cron/cron.routes'));
 // Admin dashboards (super_admin + tenant_admin)
 router.use('/dashboards', require('../modules/dashboards/dashboards.routes'));
 
+// Configurable RBAC — roles & permissions matrix
+router.use('/permissions', require('../modules/permissions/permissions.routes'));
+
 router.get('/health', function (_req, res) {
   return res.json({ status: true, msg: 'ok' });
 });

@@ -29,11 +29,11 @@ import { lazy, Suspense } from 'react';
 import PageSpinner from '@/components/PageSpinner';
 const GanttTimeline = lazy(() => import('./components/GanttTimeline'));
 
-const NAVY = '#1a3a6e';
-const OCCUPIED_BLUE = '#2563eb'; // tailwind blue-600 - pops on small pies
-const NAVY_LIGHT = '#6b8bbf';
-const FREE_GREEN = '#10b981'; // tailwind emerald-500
-const FREE_GRAY  = '#e5e7eb'; // used only for the "Closed today" state
+const NAVY = '#3657E8';            // SoCampus indigo (prototype primary)
+const OCCUPIED_BLUE = '#3657E8'; // SoCampus indigo
+const NAVY_LIGHT = '#8FA0BA';     // prototype muted steel
+const FREE_GREEN = '#0E8C7F'; // SoCampus teal
+const FREE_GRAY  = '#E2E6EE'; // token: line
 
 function fmtPct(numerator: number, denominator: number): string {
   if (denominator <= 0) return '0%';
@@ -236,7 +236,7 @@ export default function DashboardPage() {
       {/* ---- header ---- */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-brand-navy">Dashboard</h1>
+          <h1 className="font-display text-[22px] font-semibold tracking-tight text-inktext">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
             Live snapshot of facility utilization &middot; updated {new Date(as_of).toLocaleTimeString()}
           </p>
@@ -477,28 +477,25 @@ function KpiTile({ icon, label, value, sub, accent }: {
   sub?: string;
   accent: 'navy' | 'warning' | 'success';
 }) {
-  const border = {
-    navy:    'border-l-brand-navy',
-    warning: 'border-l-amber-500',
-    success: 'border-l-emerald-500',
-  }[accent];
+  // Prototype .kpi card: no accent stripe — soft icon square, uppercase
+  // eyebrow label, big Space Grotesk number.
   const iconBg = {
-    navy:    'bg-brand-navy-soft text-brand-navy',
-    warning: 'bg-amber-100 text-amber-700',
-    success: 'bg-emerald-100 text-emerald-700',
+    navy:    'bg-indigo-soft text-indigo-ink',
+    warning: 'bg-amber-soft text-amber-ink',
+    success: 'bg-teal-soft text-teal-ink',
   }[accent];
   return (
-    <Card className={cn('border-l-4', border)}>
+    <Card>
       <CardContent className="p-5 flex items-start gap-4">
-        <div className={cn('h-10 w-10 rounded-md flex items-center justify-center shrink-0', iconBg)}>
+        <div className={cn('h-10 w-10 rounded-[10px] flex items-center justify-center shrink-0', iconBg)}>
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+          <div className="text-[11px] text-mutedx uppercase tracking-[.1em] font-semibold">
             {label}
           </div>
-          <div className="text-3xl font-bold mt-0.5">{value}</div>
-          {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
+          <div className="font-display text-3xl font-bold tracking-tight mt-1">{value}</div>
+          {sub && <div className="text-xs text-mutedx mt-1">{sub}</div>}
         </div>
       </CardContent>
     </Card>
