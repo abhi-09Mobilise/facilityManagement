@@ -1,0 +1,106 @@
+# ============================================================
+# Root .gitignore for the FMS monorepo
+# ============================================================
+
+# ---------- Python ----------
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.egg-info/
+dist/
+build/
+
+# ---------- Node ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+
+# ---------- Environment / secrets ----------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---------- ML model weights (use LFS or external storage) ----------
+*.pt
+*.pth
+*.h5
+*.pkl
+*.pickle
+*.onnx
+*.tflite
+*.safetensors
+*.bin
+*.ckpt
+# Large binaries that showed up in the failed push
+torch_cpu.dll
+_polars_runtime.pyd
+cv2.pyd
+*.dll
+*.dylib
+
+# ---------- Build output ----------
+dist/
+build/
+out/
+.next/
+.turbo/
+.parcel-cache/
+
+# ---------- Editor / OS ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Logs ----------
+logs/
+*.log
+
+# ---------- Test / coverage ----------
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ---------- Frontend Vite ----------
+frontend/.vite/
+frontend/dist/
+
+# ---------- Backend uploads (dev only) ----------
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# ---------- Floor-scan service local artifacts ----------
+floor-scan-svc/architect_best.pt
+floor-scan-svc/yolo11*.pt
+floor-scan-svc/_synth_*.png
+yolo11*.pt
+
+# ---------- Scratch / temp ----------
+*.tmp
+*.bak
+*.orig
