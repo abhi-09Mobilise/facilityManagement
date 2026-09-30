@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SoCampus Desk — Facility Management">
+  <title>SoCampus Desk</title>
+  <!-- Rounded brand tile in the app's primary blue. -->
+  <rect width="64" height="64" rx="14" fill="#2563eb"/>
+  <!-- Modern office-building silhouette: main tower + shorter annex.
+       Industry-standard mark for facility / property management. -->
+  <g fill="#ffffff">
+    <rect x="12" y="18" width="24" height="34" rx="1.5"/>
+    <rect x="38" y="28" width="14" height="24" rx="1.5"/>
+  </g>
+  <!-- Window grid (blue cutouts through the white towers) — reads as
+       stacked floors at medium sizes, blurs into a subtle texture at 16 px. -->
+  <g fill="#2563eb">
+    <rect x="17" y="24" width="4" height="3" rx="0.5"/>
+    <rect x="27" y="24" width="4" height="3" rx="0.5"/>
+    <rect x="17" y="31" width="4" height="3" rx="0.5"/>
+    <rect x="27" y="31" width="4" height="3" rx="0.5"/>
+    <rect x="17" y="38" width="4" height="3" rx="0.5"/>
+    <rect x="27" y="38" width="4" height="3" rx="0.5"/>
+    <rect x="17" y="45" width="4" height="3" rx="0.5"/>
+    <rect x="27" y="45" width="4" height="3" rx="0.5"/>
+    <rect x="43" y="33" width="4" height="3" rx="0.5"/>
+    <rect x="43" y="40" width="4" height="3" rx="0.5"/>
+    <rect x="43" y="47" width="4" height="3" rx="0.5"/>
+  </g>
+</svg>

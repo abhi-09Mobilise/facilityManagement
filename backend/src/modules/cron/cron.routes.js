@@ -9,5 +9,6 @@ const ctrl = require('./cron.controller');
 const router = express.Router();
 
 router.post('/pre-end-notify', ctrl.requireCronKey, ctrl.preEndNotify);
+router.post('/aggregate-occupancy', ctrl.requireCronKey, ctrl.aggregateOccupancy);
 
 module.exports = router;

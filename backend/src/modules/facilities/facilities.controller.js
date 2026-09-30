@@ -268,6 +268,67 @@ exports.update = asyncHandler(async function (req, res) {
     ? (b.layout_json == null ? null : (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)))
     : null;
 
+  // T1.1 - Save-time chair-id integrity. Reject the save if the incoming
+  // layout has duplicate chair ids OR renames a chair that has active
+  // bookings under its old id (which would silently orphan the history).
+  //
+  // Applies only when `layout_json` is present in the payload. Empty
+  // string (clear layout) is allowed — no chairs = no conflicts.
+  if (hasLayout && layoutVal) {
+    let incomingLayout = null;
+    try {
+      incomingLayout = typeof layoutVal === 'string' ? JSON.parse(layoutVal) : layoutVal;
+    } catch (parseErr) {
+      return fail(res, 'layout_json is not valid JSON', 422);
+    }
+    const objs = (incomingLayout && Array.isArray(incomingLayout.objects)) ? incomingLayout.objects : [];
+    const chairIds = objs
+      .filter((o) => o && o.type === 'chair' && o.id)
+      .map((o) => String(o.id));
+
+    // (a) Duplicate ids inside the SAME layout — always rejected. Two
+    // chairs with the same id would collapse into one at booking-check
+    // time and silently mis-route bookings.
+    const seen = new Set();
+    for (const cid of chairIds) {
+      if (seen.has(cid)) {
+        return fail(res, `Duplicate chair id in layout: ${cid}`, 400, { error_code: 'DESK_ID_CONFLICT', desk_id: cid });
+      }
+      seen.add(cid);
+    }
+
+    // (b) Renamed / removed chair with active bookings. Compare the new
+    // id set against the current bookings and flag any orphaned id that
+    // is referenced by an active (not cancelled / not trashed) booking.
+    // This preserves the historical link — the admin can either keep the
+    // old id in the layout OR cancel the affected bookings first.
+    const activeBookings = await query(
+      "SELECT desk_id FROM `bookings` " +
+      " WHERE facility_id = ? AND trash = 0 " +
+      "   AND desk_id IS NOT NULL " +
+      "   AND status IN ('pending','approved','completed')",
+      [id]
+    );
+    const claimedInBookings = new Set();
+    for (const row of activeBookings) {
+      String(row.desk_id || '')
+        .split(',').map((s) => s.trim()).filter(Boolean)
+        .forEach((cid) => claimedInBookings.add(cid));
+    }
+    const layoutSet = new Set(chairIds);
+    for (const cid of claimedInBookings) {
+      if (!layoutSet.has(cid)) {
+        return fail(
+          res,
+          `Chair ${cid} is referenced by ${activeBookings.length} active booking(s) but is missing / renamed in the new layout. ` +
+          `Either keep the chair id, or cancel those bookings first.`,
+          400,
+          { error_code: 'DESK_ID_CONFLICT', desk_id: cid }
+        );
+      }
+    }
+  }
+
   // Advance-booking rules: each is nullable INT. Treat key-not-present as
   // "leave alone"; key-present-with-null-or-empty as "clear" (no limit);
   // a non-negative number as "set"; negative → clear.
@@ -321,7 +382,7 @@ exports.update = asyncHandler(async function (req, res) {
       ...(fWeek.present  ? [fWeek.value]  : []),
       ...(fMonth.present ? [fMonth.value] : []),
       ...(fPre.present   ? [fPre.value]   : []),
-      b.description || null, b.image_url || null,
+      b.description || null, b.terms_and_conditions || null, b.image_url || null,
       ...(hasLayout ? [layoutVal] : []),
       intOrNull(b.requires_approval), sharedVal,
       ...(hasApprover ? [newApprover] : []),

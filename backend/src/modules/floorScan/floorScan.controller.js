@@ -72,7 +72,12 @@ function resolveImage(req) {
 exports.scan = asyncHandler(async function (req, res) {
   const img = resolveImage(req);
   if (!img) {
-    return fail(res, 'No image provided. Send multipart `image` or JSON `image_base64` data URL.', 415);
+    return fail(
+      res,
+      'No image provided. Send multipart `image` or JSON `image_base64` data URL.',
+      415,
+      { error_code: 'INVALID_IMAGE', retryable: false }
+    );
   }
 
   // Build a FormData payload for the Python service. Node 18+ has both
@@ -84,12 +89,21 @@ exports.scan = asyncHandler(async function (req, res) {
     const blob = new Blob([img.buf], { type: img.mime });
     fd.append('image', blob, img.filename);
 
-    // 30-second hard timeout so a stuck Python process doesn't hang the
-    // request indefinitely.
+    // 90-second hard timeout so a stuck Python process doesn't hang the
+    // request indefinitely. Sized for the Gemini retry+fallback ladder,
+    // which in the worst case runs three sequential Google API calls
+    // (primary → 2s sleep → primary retry → fallback), each of which can
+    // take 10-15s under high demand. Local model paths (/scan-yolo,
+    // /scan-architect) finish in 1-3s so the extra headroom is free.
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
+    const timer = setTimeout(() => ctrl.abort(), 90000);
     try {
-      upstream = await fetch(`${SCAN_URL}/scan`, {
+      // Provider-agnostic AI endpoint. The Python service dispatches to
+      // Gemini / Claude / OpenAI based on its own AI_PROVIDER env var —
+      // neither this controller nor the frontend need to know which one
+      // ran. Response shape (ScanResponse) is identical across providers.
+      // See floor-scan-svc/app.py `scan_ai()` for the endpoint contract.
+      upstream = await fetch(`${SCAN_URL}/scan-ai`, {
         method: 'POST',
         body: fd,
         signal: ctrl.signal,
@@ -104,7 +118,8 @@ exports.scan = asyncHandler(async function (req, res) {
       res,
       'Floor scan service is not reachable. Start the Python service: ' +
       'cd floor-scan-svc && uvicorn app:app --port 5001',
-      503
+      503,
+      { error_code: 'SCAN_SERVICE_DOWN', retryable: true }
     );
   }
 
@@ -113,14 +128,58 @@ exports.scan = asyncHandler(async function (req, res) {
     body = await upstream.json();
   } catch (e) {
     console.error('[floor-scan] upstream returned non-JSON:', e && e.message);
-    return fail(res, 'Floor scan service returned an unexpected response.', 502);
+    return fail(res, 'Floor scan service returned an unexpected response.', 502, {
+      error_code: 'SCAN_INTERNAL_ERROR',
+      retryable: false,
+    });
   }
 
   if (!upstream.ok) {
-    // 4xx/5xx from Python — bubble up the detail so the operator can tune.
-    const detail = body && (body.detail || body.msg || JSON.stringify(body));
-    console.warn('[floor-scan] upstream failure', upstream.status, detail);
-    return fail(res, `Floor scan failed: ${detail || upstream.statusText}`, upstream.status);
+    // Python's /scan-gemini returns a STRUCTURED error body (see
+    // floor-scan-svc/app.py `_resolve_final_error`). Prefer that when
+    // present so the frontend gets a stable `error_code` / `retryable`
+    // contract instead of a raw Python exception string.
+    //
+    // FastAPI wraps our dict in `{ "detail": {...} }`; older endpoints
+    // (/scan, /scan-yolo, /scan-architect) still use string details.
+    const detailObj =
+      body && typeof body.detail === 'object' && body.detail !== null
+        ? body.detail
+        : null;
+
+    if (detailObj && typeof detailObj.error_code === 'string') {
+      // Structured path — pass code + retryable through to the frontend.
+      const msg =
+        typeof detailObj.message === 'string' && detailObj.message.trim()
+          ? detailObj.message
+          : 'Floor scan failed.';
+      console.warn(
+        '[floor-scan] upstream failure',
+        upstream.status,
+        detailObj.error_code,
+        `primary=${detailObj.primary_status ?? '-'}`,
+        `fallback=${detailObj.fallback_status ?? '-'}`
+      );
+      return fail(res, msg, upstream.status, {
+        error_code: detailObj.error_code,
+        retryable: Boolean(detailObj.retryable),
+        primary_status: detailObj.primary_status ?? null,
+        fallback_status: detailObj.fallback_status ?? null,
+      });
+    }
+
+    // Legacy / non-structured path — keep prior behaviour but sanitise:
+    // stringify only the outermost fields, not a full JSON dump that
+    // might contain a Python traceback.
+    const legacyDetail =
+      (body && (typeof body.detail === 'string' ? body.detail : body.msg)) ||
+      upstream.statusText ||
+      'unknown upstream error';
+    console.warn('[floor-scan] upstream failure', upstream.status, legacyDetail);
+    return fail(res, `Floor scan failed: ${legacyDetail}`, upstream.status, {
+      error_code: 'SCAN_UPSTREAM_ERROR',
+      retryable: upstream.status >= 500 && upstream.status < 600,
+    });
   }
 
   // Pass-through — the frontend already knows the shape (we documented it
