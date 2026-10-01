@@ -327,7 +327,9 @@ export interface User {
 
 export interface CreateUserPayload {
   username: string;
-  password: string;
+  // Optional by design: when omitted the backend generates a random password
+  // and the user sets their own via the invite email's set-password link.
+  password?: string;
   name?: string;
   lname?: string;
   email?: string;

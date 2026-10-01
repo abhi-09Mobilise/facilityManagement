@@ -105,10 +105,21 @@ export default function RolePermissionsPage() {
     return matrix?.overrides?.[role]?.[key] !== undefined;
   };
 
+  const ORDER: Record<PermValue, number> = { no: 0, team: 1, yes: 2 };
+  const canEditRole = (role: MatrixRole) => (matrix?.editable_roles ?? []).includes(role);
+  const ceilingOf = (role: MatrixRole, key: string): PermValue =>
+    (!isSuper && matrix?.ceilings ? (matrix.ceilings[role]?.[key] ?? 'no') : 'yes');
+
   function clickCell(role: MatrixRole, key: string) {
     if (role === 'employee' && key === 'roles.manage') return; // guardrail mirrors backend
+    if (!canEditRole(role)) return;                            // sub-role rule
+    const cap = ceilingOf(role, key);
     const cur = cellValue(role, key);
-    setDraft((d) => ({ ...d, [`${role}:${key}`]: NEXT[cur] }));
+    // Cycle, skipping any value above the delegation ceiling.
+    let next = NEXT[cur];
+    while (ORDER[next] > ORDER[cap]) next = NEXT[next];
+    if (next === cur) return;
+    setDraft((d) => ({ ...d, [`${role}:${key}`]: next }));
   }
 
   function resetCell(role: MatrixRole, key: string) {
@@ -206,6 +217,8 @@ export default function RolePermissionsPage() {
                   isOverridden={isOverridden}
                   clickCell={clickCell}
                   resetCell={resetCell}
+                  canEdit={canEditRole}
+                  capOf={ceilingOf}
                 />
               ))}
             </tbody>
@@ -222,13 +235,15 @@ export default function RolePermissionsPage() {
   );
 }
 
-function GroupRows({ group, perms, cellValue, isOverridden, clickCell, resetCell }: {
+function GroupRows({ group, perms, cellValue, isOverridden, clickCell, resetCell, canEdit, capOf }: {
   group: string;
   perms: Array<{ key: string; label: string }>;
   cellValue: (r: MatrixRole, k: string) => PermValue;
   isOverridden: (r: MatrixRole, k: string) => boolean;
   clickCell: (r: MatrixRole, k: string) => void;
   resetCell: (r: MatrixRole, k: string) => void;
+  canEdit: (r: MatrixRole) => boolean;
+  capOf: (r: MatrixRole, k: string) => PermValue;
 }) {
   return (
     <>
@@ -242,10 +257,14 @@ function GroupRows({ group, perms, cellValue, isOverridden, clickCell, resetCell
             <span className="ml-2 hidden rounded bg-[#EEF1F6] px-1.5 font-mono text-[10.5px] text-faint lg:inline">{p.key}</span>
           </td>
           {ROLE_ORDER.map((r) => {
-            const locked = r === 'employee' && p.key === 'roles.manage';
+            const roleLocked = !canEdit(r);
+            const cap = capOf(r, p.key);
+            const capped = cap !== 'yes';
+            const locked = roleLocked || (r === 'employee' && p.key === 'roles.manage') || cap === 'no';
             const overridden = isOverridden(r, p.key);
             return (
-              <td key={r} className="px-2 py-2 text-center">
+              <td key={r} className="px-2 py-2 text-center"
+                title={roleLocked ? 'Managed by the role above you' : capped ? `Capped at "${cap}" by the Super admin` : undefined}>
                 <div className="relative inline-flex items-center">
                   <CellChip
                     value={cellValue(r, p.key)}
@@ -253,6 +272,9 @@ function GroupRows({ group, perms, cellValue, isOverridden, clickCell, resetCell
                     locked={locked}
                     onClick={() => clickCell(r, p.key)}
                   />
+                  {capped && !roleLocked && (
+                    <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-[8px] font-semibold uppercase tracking-wide text-faint">cap: {cap}</span>
+                  )}
                   {overridden && !locked && (
                     <button
                       type="button"

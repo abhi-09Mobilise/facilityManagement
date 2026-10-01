@@ -1,11 +1,13 @@
 const router = require('express').Router();
 const ctrl = require('./departments.controller');
-const { authRequired, requireRole } = require('../../middleware/auth');
+
+const { authRequired, requireRole, tenantChecker } = require('../../middleware/auth');
 
 router.use(authRequired);
 router.use(requireRole('super_admin', 'tenant_admin', 'org_admin'));
+router.use(tenantChecker);
 
-router.get('/',       ctrl.list);
+router.get('/',      ctrl.list);
 router.post('/',      ctrl.create);
 router.put('/:id',    ctrl.update);
 router.delete('/:id', requireRole('super_admin', 'tenant_admin'), ctrl.remove);

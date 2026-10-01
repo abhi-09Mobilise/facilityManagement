@@ -6,7 +6,8 @@
 // organisation_id from the shared filter cascade.
 
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Snackbar,
+} from '@mui/material';
 import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import { sitesApi } from '@/api/sites.api';
@@ -29,16 +30,18 @@ export default function SiteFormPage() {
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Load the Organisation options once. Bare `limit: 200` is fine here — the
   // backend already scopes to the caller's tenant.
   useEffect(() => {
     setOrgsLoading(true);
-    organisationsApi.list({ limit: 200 })
+    organisationsApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined })
       .then((r) => setOrganisations(r.data?.data || []))
       .catch(() => setOrganisations([]))
       .finally(() => setOrgsLoading(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   // Pre-fill organisation_id from the tabbed-shell filter when creating.
   useEffect(() => {
@@ -75,9 +78,13 @@ export default function SiteFormPage() {
       // null (they can target any tenant); the backend will fall back to
       // deriving tenant_id from the picked organisation.
       if (!editing && user?.tenant_id) payload.tenant_id = user.tenant_id;
-      if (editing) await sitesApi.update(Number(id), payload);
-      else         await sitesApi.create(payload);
-      navigate(-1);
+      if (editing) { await sitesApi.update(Number(id), payload); navigate(-1); }
+      else {
+        await sitesApi.create(payload);
+        // Product decision: success toast instead of a notification email.
+        setToast('Site created');
+        setTimeout(() => navigate(-1), 900);
+      }
     } catch (err: unknown) {
       setError((err as { response?: { data?: { msg?: string } } })?.response?.data?.msg || 'Save failed');
     } finally { setSaving(false); }
@@ -86,7 +93,7 @@ export default function SiteFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={720}>
+    <Box maxWidth={720} mx="auto">
       <PageHeader title={editing ? `Edit site #${id}` : 'New site'} back="/admin/sites" />
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit}>
@@ -128,6 +135,14 @@ export default function SiteFormPage() {
           </Stack>
         </form>
       </Paper>
+          <Snackbar
+        open={!!toast}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
+      </Snackbar>
     </Box>
   );
 }

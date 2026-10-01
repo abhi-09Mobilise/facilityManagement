@@ -13,6 +13,22 @@ const { ok, created, fail } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull, assertOwnership } = require('../../utils/tenantScope');
 const { scopeOrgWhere } = require('../../utils/orgScope');
+// M1 (stable desk ids): single owner of chair-id parsing/validation rules.
+const deskLayout = require('../../utils/deskLayout');
+
+// Chair ids referenced by this facility's future bookings (pending/approved).
+// Used to refuse layout saves that would leave bookings.desk_id dangling.
+async function futureBookedDeskIds(facilityId) {
+  const rows = await query(
+    "SELECT desk_id FROM `bookings` " +
+    " WHERE facility_id = ? AND desk_id IS NOT NULL AND trash = 0 " +
+    "   AND status IN ('pending','approved') AND end_at >= NOW()",
+    [facilityId]
+  );
+  const out = new Set();
+  rows.forEach((r) => deskLayout.splitBookingDeskIds(r.desk_id).forEach((id) => out.add(id)));
+  return [...out];
+}
 
 const VALID_TYPES = ['meeting_room','gym','conference_room','desk','swimming_pool','other'];
 
@@ -174,6 +190,13 @@ exports.create = asyncHandler(async function (req, res) {
   // NULL/0 disables the feature for the facility.
   const preEndMin    = ruleVal(b.pre_end_notify_minutes);
 
+  // M1: pre-insert layout validation (charset + duplicate ids). Canonical id
+  // assignment needs the facility id, so it happens post-insert inside the txn.
+  if (b.layout_json) {
+    const check = deskLayout.validateAndNormalizeLayout({ layout: b.layout_json, facilityId: 0 });
+    if (!check.ok) return fail(res, check.message, 400, { code: check.code, conflicts: check.conflicts });
+  }
+
   const newId = await withTransaction(async function (conn) {
     // Clamp offline_capacity to [0, capacity] so we never end up with a
     // facility whose offline reservation exceeds its total seat count.
@@ -199,6 +222,16 @@ exports.create = asyncHandler(async function (req, res) {
       ]
     );
     const facilityId = r.insertId;
+
+    // M1: assign canonical FAC<id>-D<seq> ids to any chairs saved without one,
+    // now that the facility id exists. Same transaction — the facility is
+    // never visible with unnormalized chair ids.
+    if (b.layout_json) {
+      const norm = deskLayout.validateAndNormalizeLayout({ layout: b.layout_json, facilityId });
+      if (norm.ok && norm.assigned > 0) {
+        await conn.execute('UPDATE `facilities` SET layout_json = ? WHERE id = ?', [norm.layoutJson, facilityId]);
+      }
+    }
 
     // Default chain: step 1 = dept manager, step 2 = facility approver (if set).
     // The UI on the facility form can replace this entire chain via PUT
@@ -264,7 +297,7 @@ exports.update = asyncHandler(async function (req, res) {
 
   // F09 - layout_json. Pass null to "leave alone"; empty string clears it.
   const hasLayout = Object.prototype.hasOwnProperty.call(b, 'layout_json');
-  const layoutVal = hasLayout
+  let layoutVal = hasLayout
     ? (b.layout_json == null ? null : (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)))
     : null;
 

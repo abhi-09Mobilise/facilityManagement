@@ -44,6 +44,18 @@ function requireRole(...roles) {
   };
 }
 
+function tenantChecker(req,res,next){
+  
+  
+    if(req.query.tenant_id != req.user.tenant_id &&  req.user.role != 'super_admin')
+    {
+      console.log("tenantChecker", req.user , req.query)
+      return res.status(403).json({status : false, msg : 'Forbidden'})
+    }
+  
+  next();
+}
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -60,4 +72,4 @@ function signToken(user) {
   );
 }
 
-module.exports = { authRequired, requireRole, signToken };
+module.exports = { authRequired, requireRole, signToken, tenantChecker };

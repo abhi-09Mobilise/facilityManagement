@@ -14,6 +14,10 @@ export interface PermMatrix {
   resolved: Record<MatrixRole, Record<string, PermValue>>;
   overrides: Partial<Record<MatrixRole, Record<string, PermValue>>>;
   defaults: Record<MatrixRole, Record<string, PermValue>>;
+  // Delegation: ceiling = what the level above granted (null for global scope);
+  // editable_roles = roles strictly below the editor's own role.
+  ceilings: Record<MatrixRole, Record<string, PermValue>> | null;
+  editable_roles: MatrixRole[];
 }
 
 export interface PermChange {

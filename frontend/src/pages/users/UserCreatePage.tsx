@@ -14,19 +14,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, Divider, FormControlLabel, IconButton,
-  InputAdornment, MenuItem, Paper, Radio, RadioGroup, Stack, Switch, TextField,
+  Alert, Box, Button, CircularProgress, Divider, FormControlLabel,
+  MenuItem, Paper, Radio, RadioGroup, Stack, Switch, TextField,
   Tooltip, Typography,
 } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import GroupsIcon from '@mui/icons-material/Groups';
 import PersonIcon from '@mui/icons-material/Person';
 import { useNavigate } from 'react-router-dom';
 import { usersApi } from '@/api/users.api';
 import { sitesApi } from '@/api/sites.api';
 import { departmentsApi } from '@/api/departments.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import { useAuth } from '@/context/AuthContext';
 import type { Department, Role, Site } from '@/types';
 
@@ -40,8 +39,6 @@ interface FormState {
 
   // Step 4
   username: string;
-  password: string;
-  confirmPassword: string;
   name: string;
   lname: string;
   email: string;
@@ -58,7 +55,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INITIAL: FormState = {
   site_id: '', department_id: '',
   user_kind: 'employee',
-  username: '', password: '', confirmPassword: '',
+  username: '',
   name: '', lname: '', email: '', mobile: '',
   designation: '',
   role: 'employee',
@@ -70,6 +67,8 @@ export default function UserCreatePage() {
   const { user: currentUser } = useAuth();
   const isSuper = currentUser?.role === 'super_admin';
 
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [form, setForm] = useState<FormState>(INITIAL);
   const [sites, setSites] = useState<Site[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -77,17 +76,16 @@ export default function UserCreatePage() {
   const [loadingDepts, setLoadingDepts] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showPwd, setShowPwd] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
 
   // Load Sites once.
   useEffect(() => {
     setLoadingSites(true);
-    sitesApi.list({ limit: 200 })
+    sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined })
       .then((r) => setSites(r.data?.data || []))
       .catch(() => {})
       .finally(() => setLoadingSites(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   // Departments are site-scoped (migration 015 + the recent controller update).
   // Refetch every time the picked site changes; clear the list when no site
@@ -145,8 +143,7 @@ export default function UserCreatePage() {
     if (!form.site_id) return 'Pick a site';
     if (!form.department_id) return 'Pick a department';
     if (!form.username.trim()) return 'Username is required';
-    if (form.password.length < 6) return 'Password must be at least 6 characters';
-    if (form.password !== form.confirmPassword) return 'Passwords do not match';
+    // No password here by design: the invite email carries a set-password link.
     if (form.email && !EMAIL_RE.test(form.email)) return 'Email is not valid';
     return null;
   }
@@ -160,7 +157,8 @@ export default function UserCreatePage() {
     try {
       const res = await usersApi.create({
         username: form.username.trim(),
-        password: form.password,
+        // password intentionally omitted — backend generates a random one and
+        // the user sets their own via the invite/reset email link.
         name: form.name || undefined,
         lname: form.lname || undefined,
         email: form.email || undefined,
@@ -189,7 +187,7 @@ export default function UserCreatePage() {
   const detailsDisabled = !step2Done;
 
   return (
-    <Box maxWidth={780}>
+    <Box maxWidth={780} mx="auto">
       <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>New User</Typography>
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit} autoComplete="off">
@@ -298,45 +296,10 @@ export default function UserCreatePage() {
                   </TextField>
                 </Stack>
 
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                  <TextField required type={showPwd ? 'text' : 'password'} label="Password" fullWidth
-                    value={form.password} onChange={bind('password')}
-                    inputProps={{ autoComplete: 'new-password' }}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton
-                            size="small"
-                            edge="end"
-                            aria-label={showPwd ? 'Hide password' : 'Show password'}
-                            onClick={() => setShowPwd((v) => !v)}
-                            onMouseDown={(e) => e.preventDefault()}
-                          >
-                            {showPwd ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-                          </IconButton>
-                        </InputAdornment>
-                      ),
-                    }}
-                    helperText="Minimum 6 characters" />
-                  <TextField required type={showConfirm ? 'text' : 'password'} label="Confirm password" fullWidth
-                    value={form.confirmPassword} onChange={bind('confirmPassword')}
-                    inputProps={{ autoComplete: 'new-password' }}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton
-                            size="small"
-                            edge="end"
-                            aria-label={showConfirm ? 'Hide password' : 'Show password'}
-                            onClick={() => setShowConfirm((v) => !v)}
-                            onMouseDown={(e) => e.preventDefault()}
-                          >
-                            {showConfirm ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-                          </IconButton>
-                        </InputAdornment>
-                      ),
-                    }} />
-                </Stack>
+                <Alert severity="info" sx={{ py: 0.5 }}>
+                  No password needed — the new user receives an email with a
+                  secure link to set their own password.
+                </Alert>
 
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                   <TextField label="First name" fullWidth value={form.name} onChange={bind('name')} />

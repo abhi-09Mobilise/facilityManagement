@@ -5,11 +5,11 @@
 // controller decide because org_admin has partial rights on their own org.
 
 const router = require('express').Router();
-const { authRequired, requireRole } = require('../../middleware/auth');
+const { authRequired, requireRole,tenantChecker } = require('../../middleware/auth');
 const ctrl = require('./organisations.controller');
 
 router.use(authRequired);
-
+router.use(tenantChecker);
 router.get('/',                       ctrl.list);
 router.get('/:id',                    ctrl.getOne);
 router.post('/',                      requireRole('super_admin', 'tenant_admin'), ctrl.create);

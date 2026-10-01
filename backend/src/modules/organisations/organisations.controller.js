@@ -186,9 +186,10 @@ exports.create = asyncHandler(async function (req, res) {
       [tenantId, name, slug, logoUrl]
     );
     const orgId = orgR.insertId;
-
+    
     // 2. Optional first org_admin user.
     let adminUserId = null;
+
     if (adminEmail) {
       const [ur] = await conn.execute(
         'INSERT INTO `users` ' +
@@ -200,6 +201,8 @@ exports.create = asyncHandler(async function (req, res) {
           adminName || null, adminLname || null, adminEmail,
         ]
       );
+
+   
       adminUserId = ur.insertId;
     }
 

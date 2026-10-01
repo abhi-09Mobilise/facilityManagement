@@ -18,8 +18,10 @@ module.exports = function errorHandler(err, req, res, next) { // eslint-disable-
 
   // MySQL / DB errors — don't leak internals in production.
   const code = err && err.code;
+
   if (code === 'ER_DUP_ENTRY') {
-    return res.status(409).json({ status: false, msg: 'Duplicate entry' });
+    const message = err.sqlMessage.split("for")[0];
+    return res.status(409).json({ status: false, msg: message});
   }
 
   const status = err.status || 500;

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import PageSpinner from '@/components/PageSpinner';
 import {
   Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, IconButton,
-  MenuItem, Paper, Stack, Switch, TextField, Typography,
+  MenuItem, Paper, Stack, Switch, TextField, Typography, Snackbar,
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
@@ -18,6 +18,7 @@ import { buildingsApi } from '@/api/buildings.api';
 import { floorsApi } from '@/api/floors.api';
 import { usersApi } from '@/api/users.api';
 import { departmentsApi } from '@/api/departments.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import { useMastersFilterOptional } from '@/contexts/MastersFilterContext';
 import { slotCapacitiesApi, type SlotOverride } from '@/api/slotCapacities.api';
 import { facilityPantriesApi } from '@/api/pantries.api';
@@ -76,6 +77,8 @@ export default function FacilityFormPage() {
   // Building is only used to gate the Floor dropdown (facilities.building_id
   // isn't persisted — the backend derives it from floor_id). Kept in local
   // state, not on form.
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [buildingId, setBuildingId] = useState<number | ''>('');
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [buildingsLoading, setBuildingsLoading] = useState(false);
@@ -110,6 +113,7 @@ export default function FacilityFormPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Cover image upload (the facility's hero photo on the booker's bento
   // card). Now uploaded to Azure Blob via /api/uploads/image; the returned
@@ -144,8 +148,9 @@ export default function FacilityFormPage() {
   }
 
   useEffect(() => {
-    sitesApi.list({ limit: 200 }).then((r) => setSites(r.data?.data || []));
-  }, []);
+    sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined }).then((r) => setSites(r.data?.data || []));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   // Buildings + departments + approvers cascade off the chosen Site. Floors
   // now cascade off the chosen Building (one step deeper) — see the next
@@ -422,7 +427,8 @@ export default function FacilityFormPage() {
       await slotCapacitiesApi.replace(facId, slotOverrides);
       await facilityPantriesApi.replace(facId, pantryIds);
 
-      navigate('/admin/masters/facilities');
+      setToast(editing ? 'Facility saved' : 'Facility created');
+      setTimeout(() => navigate('/admin/masters/facilities'), 900);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { msg?: string } } })?.response?.data?.msg
         || (err as Error)?.message
@@ -442,7 +448,7 @@ export default function FacilityFormPage() {
   const floorImageUrl = selectedFloor?.layout_image_url || null;
 
   return (
-    <Box maxWidth={960}>
+    <Box maxWidth={960} mx="auto">
       <PageHeader title={editing ? `Edit facility #${id}` : 'New facility'} back="/admin/facilities" />
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit}>
@@ -511,7 +517,7 @@ export default function FacilityFormPage() {
                   label="Capacity"
                   helperText="= chairs placed on the floor plan"
                   value={form.capacity ?? 0}
-                  InputProps={{ readOnly: true }}
+                  InputProps={{ readOnly: false }}
                   sx={{ width: 200 }}
                 />
               ) : (
@@ -927,6 +933,14 @@ export default function FacilityFormPage() {
           </Stack>
         </form>
       </Paper>
+      <Snackbar
+        open={!!toast}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
+      </Snackbar>
     </Box>
   );
 }
@@ -997,7 +1011,7 @@ export default function FacilityFormPage() {
 //           </Stack>
 //         </form>
 //       </Paper>
-//     </Box>
+//           </Box>
 //   );
 // }
 // umber(e.target.value) })} />

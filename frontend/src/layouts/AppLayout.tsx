@@ -180,6 +180,7 @@ function AppLayoutInner() {
       .then((r) => {
         const list = (r.data?.data || []) as Tenant[];
         setTenants(list);
+      
         // On first load, if scope has no tenant yet, default to the first one
         // so the org picker + downstream pages have a scope to work with.
         if (list.length > 0 && scope.tenantId === null) {
@@ -195,7 +196,9 @@ function AppLayoutInner() {
   //   tenant_admin: uses user.tenant_id (fixed, JWT)
   useEffect(() => {
     if (!showOrgPicker) return;
+   
     const effectiveTenantId = isTenantAdmin ? user?.tenant_id : scope.tenantId;
+      scope.setTenantId(effectiveTenantId);
     if (!effectiveTenantId) { setOrgs([]); return; }
     organisationsApi.list({ limit: 500, tenant_id: effectiveTenantId })
       .then((r) => {

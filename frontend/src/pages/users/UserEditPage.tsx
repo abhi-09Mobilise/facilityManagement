@@ -21,6 +21,7 @@ import PageHeader from '@/components/PageHeader';
 import { usersApi } from '@/api/users.api';
 import { sitesApi } from '@/api/sites.api';
 import { departmentsApi } from '@/api/departments.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import type { Department, Site, User } from '@/types';
 
 interface FormState {
@@ -44,6 +45,8 @@ export default function UserEditPage() {
   const navigate = useNavigate();
   const userId = Number(id);
 
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [form, setForm] = useState<FormState | null>(null);
   const [readonly, setReadonly] = useState<Pick<User, 'username' | 'role' | 'tenant_id'> | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -58,7 +61,7 @@ export default function UserEditPage() {
     setError(null);
     Promise.all([
       usersApi.getOne(userId),
-      sitesApi.list({ limit: 200 }).catch(() => null),
+      sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined }).catch(() => null),
       departmentsApi.list().catch(() => null),
     ])
       .then(([uRes, sRes, dRes]) => {
@@ -146,7 +149,7 @@ export default function UserEditPage() {
   }
   if (!form || !readonly) {
     return (
-      <Box maxWidth={760}>
+      <Box maxWidth={760} mx="auto">
         <PageHeader title={`Edit user #${id}`} back="/admin/users" />
         <Alert severity="error">{error || 'User not found'}</Alert>
       </Box>
@@ -154,7 +157,7 @@ export default function UserEditPage() {
   }
 
   return (
-    <Box maxWidth={760}>
+    <Box maxWidth={760} mx="auto">
       <PageHeader
         title={`Edit user · ${readonly.username}`}
         subtitle={`Role: ${readonly.role}`}

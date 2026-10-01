@@ -66,6 +66,7 @@ exports.list = asyncHandler(async function (req, res) {
   // Org scoping — users.organisation_id is nullable (super_admins have none)
   // so the filter kicks in only when the caller is org-scoped.
   const orgScope = scopeOrgWhere(req, 'u.organisation_id');
+
   if (orgScope.sql) {
     where.push(orgScope.sql.replace(/^\s*AND\s+/, ''));
     params.push(...orgScope.params);
@@ -100,6 +101,8 @@ exports.list = asyncHandler(async function (req, res) {
     params
   ))[0].cnt;
 
+console.log("params," ,params)
+
   const rows = await query(
     'SELECT u.id, u.tenant_id, u.organisation_id, u.username, u.name, u.lname, u.email, u.mobile, ' +
     '       u.designation, u.role, u.status, u.is_approved, u.is_approver, u.created_at, ' +
@@ -123,10 +126,15 @@ exports.list = asyncHandler(async function (req, res) {
 exports.create = asyncHandler(async function (req, res) {
   const b = req.body || {};
   const username = (b.username || '').trim();
-  const password = b.password || '';
+  // Password is OPTIONAL on admin-create: when absent we set an unguessable
+  // random one and the user chooses their own via the invite/reset email
+  // (issueToken('invite') + userInvited mail below). If a password IS sent
+  // (e.g. seed scripts / API callers) it must still meet the minimum.
+  const password = b.password ||
+    require('crypto').randomBytes(24).toString('base64url');
 
   if (!username) return fail(res, 'Username is required', 422);
-  if (!password || password.length < 6) return fail(res, 'Password must be at least 6 characters', 422);
+  if (b.password && b.password.length < 6) return fail(res, 'Password must be at least 6 characters', 422);
   if (b.email && !EMAIL_RE.test(b.email)) return fail(res, 'Email is not valid', 422);
 
   const tenantId = effectiveTenantId(req, b.tenant_id);

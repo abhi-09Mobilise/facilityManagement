@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const ctrl = require('./users.controller');
-const { authRequired, requireRole } = require('../../middleware/auth');
+const { authRequired, requireRole, tenantChecker } = require('../../middleware/auth');
 
 // Everything needs auth.
 router.use(authRequired);
@@ -11,6 +11,7 @@ router.get('/me-summary', ctrl.meSummary);
 // Admin-only from here on. org_admin can manage their own org's users; the
 // controller enforces the tighter role-assignment matrix for them.
 router.use(requireRole('super_admin', 'tenant_admin', 'org_admin'));
+router.use(tenantChecker);
 
 router.get('/approvers', ctrl.approvers);
 router.get('/',          ctrl.list);

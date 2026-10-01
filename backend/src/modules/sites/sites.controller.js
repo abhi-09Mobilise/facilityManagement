@@ -50,8 +50,6 @@ console.log("where sql ", whereSql , "params : ", params)
   // TEMP DEBUG — prove which DB and which schema the running pool queries.
   const dbInfo = await query("SELECT DATABASE() AS db, @@port AS port, @@hostname AS host");
   console.log('[sites.list] runtime pool ->', dbInfo);
-  const colInfo = await query("SHOW COLUMNS FROM `sites` LIKE 'organisation_id'");
-  console.log('[sites.list] sites.organisation_id rows via pool ->', colInfo.length);
 
   const total = (await query(
     'SELECT COUNT(*) cnt FROM `sites` s WHERE ' + whereSql,
@@ -127,26 +125,8 @@ exports.create = asyncHandler(async function (req, res) {
   );
 
   // Notify tenant admins (fire-and-forget). Wrapped in an async IIFE so the
-  // request returns immediately even though we need two DB lookups first.
-  (async () => {
-    try {
-      const [emails, tName] = await Promise.all([
-        tenantAdminEmails(tenantId),
-        tenantName(tenantId),
-      ]);
-      if (emails.length > 0) {
-        mailer.siteCreated({
-          to: emails,
-          tenantName: tName || '',
-          siteName: b.name,
-          code: b.code || null,
-          address: b.address || null,
-        });
-      }
-    } catch (e) {
-      console.error('[sites.create] notify failed:', e && e.message);
-    }
-  })();
+  // Creation emails removed by product decision (Aug 2026):
+  // the UI shows a success toast instead of mailing tenant admins.
 
   return created(res, { id: r.insertId }, 'Site created');
 });

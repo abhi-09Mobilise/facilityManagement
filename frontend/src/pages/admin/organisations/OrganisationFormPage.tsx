@@ -137,7 +137,7 @@ export default function OrganisationFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={720}>
+    <Box maxWidth={720} mx="auto">
       <PageHeader
         title={editing ? `Edit organisation #${id}` : 'New organisation'}
         back="/admin/organisations"

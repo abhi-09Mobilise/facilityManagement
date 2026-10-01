@@ -1,12 +1,12 @@
 const router = require('express').Router();
 const ctrl = require('./sites.controller');
-const { authRequired, requireRole } = require('../../middleware/auth');
+const { authRequired, requireRole,tenantChecker } = require('../../middleware/auth');
 
 router.use(authRequired);
 // org_admin can list/get/create/update sites within their own org; delete stays
 // tenant-admin-only so an org_admin can't wipe out live infrastructure.
 router.use(requireRole('super_admin', 'tenant_admin', 'org_admin'));
-
+router.use(tenantChecker);
 router.get('/',        ctrl.list);
 router.post('/',       ctrl.create);
 router.get('/:id',     ctrl.getOne);

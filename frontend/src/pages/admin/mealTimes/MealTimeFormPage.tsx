@@ -39,7 +39,7 @@ export default function MealTimeFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={520}>
+    <Box maxWidth={520} mx="auto">
       <PageHeader title={editing ? `Edit meal time #${id}` : 'New meal time'} back="/admin/meal-times" />
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit}>

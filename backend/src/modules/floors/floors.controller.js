@@ -87,26 +87,8 @@ exports.create = asyncHandler(async function (req, res) {
     [building.tenant_id, site.id, building.id, b.name, intOrNull(b.level_number), layoutImageUrl]
   );
 
-  // Notify tenant admins (fire-and-forget).
-  (async () => {
-    try {
-      const [emails, tName] = await Promise.all([
-        tenantAdminEmails(building.tenant_id),
-        tenantName(building.tenant_id),
-      ]);
-      if (emails.length > 0) {
-        mailer.floorCreated({
-          to: emails,
-          tenantName: tName || '',
-          siteName: site.name,
-          floorName: b.name,
-          levelNumber: intOrNull(b.level_number),
-        });
-      }
-    } catch (e) {
-      console.error('[floors.create] notify failed:', e && e.message);
-    }
-  })();
+  // Creation emails removed by product decision (Aug 2026):
+  // the UI shows a success toast instead of mailing tenant admins.
 
   return created(res, { id: r.insertId }, 'Floor created');
 });

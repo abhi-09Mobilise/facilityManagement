@@ -42,7 +42,8 @@ exports.login = asyncHandler(async function (req, res) {
   const rows = await query(
     'SELECT u.id, u.tenant_id, u.organisation_id, u.department_id, u.username, u.name, u.lname, u.email, u.password, u.role, ' +
     '       u.status, u.trash, u.is_approved, u.login_attempts, u.login_clear_datetime, ' +
-    '       t.name AS tenant_name, o.name AS organisation_name ' +
+    '       t.name AS tenant_name, t.status AS tenant_status, ' +
+    '       o.name AS organisation_name, o.status AS organisation_status ' +
     '  FROM `users` u ' +
     '  LEFT JOIN `tenants` t ON t.id = u.tenant_id ' +
     '  LEFT JOIN `organisations` o ON o.id = u.organisation_id ' +
@@ -50,8 +51,6 @@ exports.login = asyncHandler(async function (req, res) {
     ' LIMIT 1',
     [username, username]
   );
-
-  console.log(rows)
 
   if (rows.length === 0) return fail(res, 'Invalid credentials', 401);
   const user = rows[0];
@@ -79,6 +78,18 @@ exports.login = asyncHandler(async function (req, res) {
 
   if (user.status !== 1 || user.is_approved !== 1) {
     return fail(res, 'Account is inactive or not approved', 403);
+  }
+
+  // Inactive tenant / organisation blocks EVERY non-super user under it —
+  // tenant_admin, org_admin, approvers and employees alike. Super admins
+  // (tenant_id NULL) are never gated by tenant state.
+  if (user.role !== 'super_admin') {
+    if (user.tenant_id && user.tenant_status !== 'active') {
+      return fail(res, 'This tenant account is inactive. Contact your administrator.', 403);
+    }
+    if (user.organisation_id && Number(user.organisation_status) === 0) {
+      return fail(res, 'Your organisation is inactive. Contact your administrator.', 403);
+    }
   }
 
   await execute(

@@ -17,6 +17,7 @@ import PageHeader from '@/components/PageHeader';
 import { departmentsApi } from '@/api/departments.api';
 import { sitesApi } from '@/api/sites.api';
 import { usersApi } from '@/api/users.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import type { Department, Site, User } from '@/types';
 
 export default function DepartmentFormPage() {
@@ -24,6 +25,8 @@ export default function DepartmentFormPage() {
   const navigate = useNavigate();
   const editing = id && id !== 'new';
 
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [form, setForm] = useState<Partial<Department>>({ status: 1 });
   const [sites, setSites] = useState<Site[]>([]);
   const [managers, setManagers] = useState<User[]>([]);
@@ -32,15 +35,17 @@ export default function DepartmentFormPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  console.log("tenant scope," , scope)
   // Sites + manager pool both load once.
   useEffect(() => {
-    sitesApi.list({ limit: 200 })
+    sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined })
       .then((r) => setSites(r.data?.data || []))
       .catch(() => setSites([]));
-    usersApi.list({ limit: 200, designation: 'Manager' })
+    usersApi.list({ limit: 200,tenant_id: scope.tenantId ?? undefined, designation: 'Manager',organisation_id: scope.organisationId ?? undefined })
       .then((r) => setManagers(r.data?.data || []))
       .catch(() => setManagers([]));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   // Load the row being edited.
   useEffect(() => {
@@ -77,7 +82,7 @@ export default function DepartmentFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={720}>
+    <Box maxWidth={720} mx="auto">
       <PageHeader title={editing ? `Edit department #${id}` : 'New department'} back="/admin/departments" />
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit}>

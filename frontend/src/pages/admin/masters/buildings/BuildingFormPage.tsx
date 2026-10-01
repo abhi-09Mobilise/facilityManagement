@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField,
+  Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Snackbar,
 } from '@mui/material';
 import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
@@ -28,6 +28,7 @@ export default function BuildingFormPage() {
   const editing = id && id !== 'new';
 
   const [form, setForm] = useState<Partial<Building>>({ status: 1 });
+  const [toast, setToast] = useState<string | null>(null);
   const [organisationId, setOrganisationId] = useState<number | ''>('');
   const [organisations, setOrganisations] = useState<Organisation[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
@@ -42,11 +43,12 @@ export default function BuildingFormPage() {
   // tenant.
   useEffect(() => {
     setOrgsLoading(true);
-    organisationsApi.list({ limit: 200 })
+    organisationsApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined })
       .then((r) => setOrganisations(r.data?.data || []))
       .catch(() => setOrganisations([]))
       .finally(() => setOrgsLoading(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   // Pre-fill organisationId from the navbar TenantScope on CREATE, so the
   // building lands under whichever org the admin is currently working in.
@@ -123,9 +125,12 @@ export default function BuildingFormPage() {
         }
         payload.site_id = form.site_id;
       }
-      if (editing) await buildingsApi.update(Number(id), payload);
-      else         await buildingsApi.create(payload);
-      navigate('/admin/masters/buildings');
+      if (editing) { await buildingsApi.update(Number(id), payload); navigate('/admin/masters/buildings'); }
+      else {
+        await buildingsApi.create(payload);
+        setToast('Building created');
+        setTimeout(() => navigate('/admin/masters/buildings'), 900);
+      }
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { msg?: string } } })?.response?.data?.msg
@@ -139,7 +144,7 @@ export default function BuildingFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={720}>
+    <Box maxWidth={720} mx="auto">
       <PageHeader
         title={editing ? `Edit building #${id}` : 'New building'}
         back="/admin/masters/buildings"
@@ -238,6 +243,14 @@ export default function BuildingFormPage() {
           </Stack>
         </form>
       </Paper>
+          <Snackbar
+        open={!!toast}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
+      </Snackbar>
     </Box>
   );
 }

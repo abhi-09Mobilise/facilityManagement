@@ -23,6 +23,16 @@ const svc = require('./permissions.service');
 
 const ALLOWED_VALUES = ['yes', 'team', 'no'];
 
+// Delegation model:
+//   * an editor may only configure roles BELOW their own
+//   * a tenant-scope value may never EXCEED the ceiling set above it
+//     (global default/override) — "you can only delegate what you were given"
+const ORDER = { no: 0, team: 1, yes: 2 };
+const EDITABLE_BY = {
+  super_admin: ['tenant_admin', 'org_admin', 'approver', 'employee'],
+  tenant_admin: ['org_admin', 'approver', 'employee'],
+};
+
 function editScope(req) {
   // Returns { tenantId } for the scope the caller may edit/view, or null if forbidden.
   const requested = req.query.tenant_id ? Number(req.query.tenant_id)
@@ -59,7 +69,19 @@ exports.getMatrix = asyncHandler(async (req, res) => {
   const overrides = {};
   raw.forEach((r) => { (overrides[r.role] = overrides[r.role] || {})[r.permission_key] = r.allowed; });
 
-  return ok(res, { tenant_id: scope.tenantId, resolved, overrides, defaults: Object.fromEntries(ROLES.map((r) => [r, defaultsFor(r)])) });
+  // Ceilings: for a tenant scope the ceiling is the GLOBAL resolution (what
+  // the super admin granted); editing above it is rejected on save and the
+  // UI locks/caps those cells. Global scope has no ceiling (super admin).
+  const ceilings = scope.tenantId ? await svc.resolveMatrix(null) : null;
+
+  return ok(res, {
+    tenant_id: scope.tenantId,
+    resolved,
+    overrides,
+    defaults: Object.fromEntries(ROLES.map((r) => [r, defaultsFor(r)])),
+    ceilings,
+    editable_roles: EDITABLE_BY[req.user.role] || [],
+  });
 });
 
 exports.saveMatrix = asyncHandler(async (req, res) => {
@@ -71,14 +93,30 @@ exports.saveMatrix = asyncHandler(async (req, res) => {
   const changes = Array.isArray(req.body.changes) ? req.body.changes : [];
   if (changes.length === 0) return ok(res, { saved: 0 });
 
+  const editable = EDITABLE_BY[req.user.role] || [];
+  const ceilings = scope.tenantId && req.user.role !== 'super_admin'
+    ? await svc.resolveMatrix(null)   // tenant admins are capped by the global grant
+    : null;                            // super admin has no ceiling
+
   for (const c of changes) {
     if (!ROLES.includes(c.role)) return fail(res, `Unknown role: ${c.role}`, 400);
     if (!KEYS.includes(c.permission_key)) return fail(res, `Unknown permission: ${c.permission_key}`, 400);
     if (c.allowed !== null && !ALLOWED_VALUES.includes(c.allowed)) {
       return fail(res, `Invalid value for ${c.permission_key}`, 400);
     }
+    // Sub-role rule: you only configure roles below your own.
+    if (!editable.includes(c.role)) {
+      return fail(res, `Your role cannot configure the ${c.role} role`, 403);
+    }
     if (c.role === 'employee' && c.permission_key === 'roles.manage' && (c.allowed === 'yes' || c.allowed === 'team')) {
       return fail(res, 'roles.manage cannot be granted to employees', 400);
+    }
+    // Delegation ceiling: never grant more than the level above granted you.
+    if (ceilings && c.allowed !== null) {
+      const cap = ceilings[c.role][c.permission_key] || 'no';
+      if (ORDER[c.allowed] > ORDER[cap]) {
+        return fail(res, `"${c.permission_key}" is capped at "${cap}" for ${c.role} by the Super admin — you can delegate up to that level only.`, 400);
+      }
     }
   }
 

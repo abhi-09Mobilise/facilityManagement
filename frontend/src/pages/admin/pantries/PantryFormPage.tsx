@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { pantriesApi, type Pantry, type PantryMenuItem } from '@/api/pantries.api';
 import { sitesApi } from '@/api/sites.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import type { Site } from '@/types';
 
 function newRow(): PantryMenuItem {
@@ -21,6 +22,8 @@ export default function PantryFormPage() {
   const editing = id && id !== 'new';
   const nav = useNavigate();
 
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [pantry, setPantry] = useState<Partial<Pantry>>({ name: '', site_id: undefined, status: 1 });
   const [menu, setMenu] = useState<PantryMenuItem[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -29,8 +32,9 @@ export default function PantryFormPage() {
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    sitesApi.list({ limit: 200 }).then((r) => setSites(r.data?.data || []));
-  }, []);
+    sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined }).then((r) => setSites(r.data?.data || []));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.tenantId, scope.organisationId]);
 
   useEffect(() => {
     if (!editing) return;

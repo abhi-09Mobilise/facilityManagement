@@ -7,6 +7,7 @@ import CrudTable from '@/components/CrudTable';
 import FilterPopover from '@/components/FilterPopover';
 import { organisationsApi } from '@/api/organisations.api';
 import { useRegisterRefresh } from '@/context/RefreshContext';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import type { Organisation } from '@/types';
 
 type OrganisationRow = Organisation & { _sno: number };
@@ -22,17 +23,30 @@ export default function OrganisationsListPage() {
   const [error, setError] = useState<string | null>(null);
   const [draftQ, setDraftQ] = useState('');
 
+  // Navbar scope drives this page like every other master: the tenant picker
+  // narrows to that tenant's organisations, and when a specific organisation
+  // is picked in the navbar we show ONLY that organisation.
+  const scope = useTenantScope();
+
   async function load() {
     setLoading(true);
     try {
-      const r = await organisationsApi.list({ page, limit: pageSize, q });
-      setRows(r.data?.data || []);
-      setTotal(r.data?.total || 0);
+      const params: Record<string, unknown> = { page, limit: pageSize, q };
+      if (scope.tenantId !== null) params.tenant_id = scope.tenantId;
+      const r = await organisationsApi.list(params);
+      let list = (r.data?.data || []) as Organisation[];
+      let count = r.data?.total || 0;
+      if (scope.organisationId !== null) {
+        list = list.filter((o) => o.id === scope.organisationId);
+        count = list.length;
+      }
+      setRows(list);
+      setTotal(count);
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q, scope.tenantId, scope.organisationId]);
 
   useRegisterRefresh(load);
 

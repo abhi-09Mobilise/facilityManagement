@@ -12,6 +12,7 @@ export const usersApi = {
     designation?: string;
     role?: Role;
   } = {}) {
+  
     return api.get<ApiEnvelope<Paginated<User>>>('/users', { params }).then((r) => r.data);
   },
   getOne(id: number) {

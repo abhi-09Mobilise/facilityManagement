@@ -31,6 +31,7 @@ export default function UsersListPage() {
 
   async function load() {
     setLoading(true);
+    
     try {
       const params: Record<string, unknown> = { page, limit: pageSize, q };
       // Tenant + Organisation come from the navbar TenantScope.

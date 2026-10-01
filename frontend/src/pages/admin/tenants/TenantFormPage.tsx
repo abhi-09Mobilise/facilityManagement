@@ -1,19 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, Divider, FormControlLabel, IconButton,
-  InputAdornment, MenuItem, Paper, Snackbar, Stack, Switch, TextField, Typography,
+  Alert, Box, Button, CircularProgress, Divider, FormControlLabel,
+  MenuItem, Paper, Snackbar, Stack, Switch, TextField, Typography,
 } from '@mui/material';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import AutorenewIcon from '@mui/icons-material/Autorenew';
 import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import { tenantsApi } from '@/api/tenants.api';
 import type { Tenant } from '@/types';
 
 // Slugifies the tenant name into a URL-safe identifier so the operator
-// doesn't have to maintain it by hand. Lowercase, alphanumerics + hyphens,
-// no leading/trailing hyphens.
+// doesn't have to maintain it by hand.
 function slugify(s: string): string {
   return (s || '')
     .toLowerCase()
@@ -23,42 +19,28 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
-// Onboarding form keeps just the four essentials. Currency/locale defaults
-// stay opaque to the operator; the slug is derived from the name. Status
-// collapses to Active vs Inactive (the underlying enum still uses
-// 'active' / 'suspended' so existing tenants don't break).
+// Create mode keeps ONE email on screen (the admin's — it doubles as the
+// tenant contact email). Edit mode shows every stored field so nothing the
+// operator saved is hidden.
 const EMPTY: Partial<Tenant> = {
   name: '', contact_email: '', contact_phone: '',
   currency_code: 'INR', locale: 'en-IN', timezone: 'Asia/Kolkata',
   status: 'active',
 };
 
-// Admin-user section — create-mode only. The backend now spawns the first
-// tenant_admin + emails an invite link when admin_email is supplied.
+// Admin-user section — create-mode only. No password field: the backend
+// spawns the tenant_admin and the invite email carries a set-password link.
 interface AdminForm {
   admin_name: string;
   admin_lname: string;
   admin_email: string;
   admin_username: string;
-  admin_password: string;
   send_invite: boolean;
 }
 const EMPTY_ADMIN: AdminForm = {
-  admin_name: '', admin_lname: '', admin_email: '',
-  admin_username: '', admin_password: '',
+  admin_name: '', admin_lname: '', admin_email: '', admin_username: '',
   send_invite: true,
 };
-
-// Cryptographically-simple random password so the operator can hand something
-// over the phone. 12 chars, mixed case + digits + a couple of symbols.
-function randomPassword(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$';
-  let out = '';
-  const arr = new Uint32Array(12);
-  window.crypto.getRandomValues(arr);
-  for (let i = 0; i < 12; i += 1) out += chars[arr[i] % chars.length];
-  return out;
-}
 
 export default function TenantFormPage() {
   const { id } = useParams();
@@ -67,7 +49,6 @@ export default function TenantFormPage() {
 
   const [form, setForm] = useState<Partial<Tenant>>(EMPTY);
   const [admin, setAdmin] = useState<AdminForm>(EMPTY_ADMIN);
-  const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,9 +77,6 @@ export default function TenantFormPage() {
     setError(null);
     setSaving(true);
     try {
-      // Build the outgoing payload: name + contact info + Active/Inactive,
-      // plus a freshly-slugified slug and the default locale/currency/tz so
-      // the backend's required-field validators stay happy.
       const payload: Partial<Tenant> & Record<string, unknown> = {
         ...form,
         slug: editing ? form.slug : (form.slug || slugify(form.name || '')),
@@ -106,28 +84,25 @@ export default function TenantFormPage() {
         locale: form.locale || 'en-IN',
         timezone: form.timezone || 'Asia/Kolkata',
       };
-      // On create, layer in the admin-user fields when an email was supplied.
-      // Blank email = tenant with no admin (operator will add users later).
       if (!editing && admin.admin_email.trim()) {
+        // Single-email rule: the admin's email is also the tenant contact.
+        payload.contact_email = form.contact_email || admin.admin_email.trim();
         payload.admin_name = admin.admin_name || undefined;
         payload.admin_lname = admin.admin_lname || undefined;
         payload.admin_email = admin.admin_email.trim();
         payload.admin_username = admin.admin_username.trim() || undefined;
-        payload.admin_password = admin.admin_password || undefined;
         payload.send_invite = admin.send_invite;
       }
       if (editing) {
         await tenantsApi.update(Number(id), payload);
-        navigate('/admin/tenants');
+        setToast('Tenant updated.');
+        setTimeout(() => navigate('/admin/tenants'), 900);
       } else {
         await tenantsApi.create(payload);
-        // Small delay so the user can see the confirmation before we leave.
-        if (admin.admin_email.trim() && admin.send_invite) {
-          setToast(`Tenant created. An invite email has been sent to ${admin.admin_email.trim()}.`);
-          setTimeout(() => navigate('/admin/tenants'), 1200);
-        } else {
-          navigate('/admin/tenants');
-        }
+        setToast(admin.admin_email.trim() && admin.send_invite
+          ? `Tenant created. Invite with a set-password link sent to ${admin.admin_email.trim()}.`
+          : 'Tenant created.');
+        setTimeout(() => navigate('/admin/tenants'), 1200);
       }
     } catch (err: unknown) {
       setError((err as { response?: { data?: { msg?: string } } })?.response?.data?.msg || 'Save failed');
@@ -138,143 +113,139 @@ export default function TenantFormPage() {
 
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
-  // Map the 3-value enum onto a 2-option Active/Inactive switch.
-  // 'active' -> Active; anything else -> Inactive.
   const statusValue: 'active' | 'inactive' = form.status === 'active' ? 'active' : 'inactive';
 
   return (
-    <Box maxWidth={640}>
-      <PageHeader title={editing ? `Edit tenant #${id}` : 'New tenant'} back="/admin/tenants" />
-      <Paper sx={{ p: 3 }}>
-        <form onSubmit={submit}>
-          <Stack spacing={2}>
-            <TextField
-              required label="Name" fullWidth
-              value={form.name || ''} onChange={bind('name')}
-              helperText={!editing ? 'A friendly name for the organisation.' : undefined}
-            />
-            <TextField
-              label="Email" type="email" fullWidth
-              value={form.contact_email || ''} onChange={bind('contact_email')}
-            />
-            <TextField
-              label="Contact" fullWidth
-              value={form.contact_phone || ''} onChange={bind('contact_phone')}
-              helperText="Phone number, WhatsApp - whatever you can reach them on."
-            />
-            <TextField
-              select label="Status" sx={{ maxWidth: 240 }}
-              value={statusValue}
-              onChange={(e) => setForm((f) => ({
-                ...f,
-                // Persist 'active' for Active, 'suspended' for Inactive so
-                // the column still satisfies its enum.
-                status: (e.target.value === 'active' ? 'active' : 'suspended') as Tenant['status'],
-              }))}
-            >
-              <MenuItem value="active">Active</MenuItem>
-              <MenuItem value="inactive">Inactive</MenuItem>
-            </TextField>
+    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+      <Box sx={{ width: '100%', maxWidth: 640 }}>
+        <PageHeader title={editing ? `Edit tenant · ${form.name || `#${id}`}` : 'New tenant'} back="/admin/tenants" />
+        <Paper sx={{ p: 3 }}>
+          <form onSubmit={submit}>
+            <Stack spacing={2}>
+              <TextField
+                required label="Name" fullWidth
+                value={form.name || ''} onChange={bind('name')}
+                helperText={!editing ? 'A friendly name for the organisation.' : undefined}
+              />
 
-            {/* ---- Admin user (create-mode only) ---- */}
-            {!editing && (
-              <>
-                <Divider sx={{ mt: 1 }} />
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  Tenant admin user
-                </Typography>
-                <Alert severity="info" sx={{ py: 0.5 }}>
-                  Leave the password blank to force the user to set their own via the invite link.
-                </Alert>
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+              {/* Edit mode shows EVERYTHING that was saved. */}
+              {editing && (
+                <>
                   <TextField
-                    required={!!admin.admin_email}
-                    label="Admin first name" fullWidth
-                    value={admin.admin_name} onChange={bindAdmin('admin_name')}
+                    label="Slug" fullWidth disabled
+                    value={form.slug || ''}
+                    helperText="Used in public portal URLs — fixed after creation."
                   />
                   <TextField
-                    label="Admin last name" fullWidth
-                    value={admin.admin_lname} onChange={bindAdmin('admin_lname')}
+                    label="Contact email" type="email" fullWidth
+                    value={form.contact_email || ''} onChange={bind('contact_email')}
                   />
-                </Stack>
-                <TextField
-                  required
-                  label="Admin email" type="email" fullWidth
-                  value={admin.admin_email} onChange={bindAdmin('admin_email')}
-                  helperText="Receives the invite email. Leave blank to skip creating an admin."
-                />
-                <TextField
-                  label="Admin username" fullWidth
-                  value={admin.admin_username} onChange={bindAdmin('admin_username')}
-                  placeholder={`${slugify(form.name || '') || 'slug'}admin`}
-                  helperText="Optional — defaults to <slug>admin on the backend."
-                />
-                <TextField
-                  label="Admin password"
-                  type={showPwd ? 'text' : 'password'}
-                  fullWidth
-                  value={admin.admin_password}
-                  onChange={bindAdmin('admin_password')}
-                  helperText="Optional. If left blank, the user must set one via the invite link."
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          size="small"
-                          onClick={() => setAdmin((a) => ({ ...a, admin_password: randomPassword() }))}
-                          aria-label="Generate random password"
-                          title="Generate random"
-                          onMouseDown={(e) => e.preventDefault()}
-                        >
-                          <AutorenewIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small" edge="end"
-                          aria-label={showPwd ? 'Hide password' : 'Show password'}
-                          onClick={() => setShowPwd((v) => !v)}
-                          onMouseDown={(e) => e.preventDefault()}
-                        >
-                          {showPwd ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={admin.send_invite}
-                      onChange={(_e, v) => setAdmin((a) => ({ ...a, send_invite: v }))}
+                  <TextField
+                    label="Contact phone" fullWidth
+                    value={form.contact_phone || ''} onChange={bind('contact_phone')}
+                  />
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                    <TextField
+                      label="Currency" fullWidth
+                      value={form.currency_code || ''} onChange={bind('currency_code')}
                     />
-                  }
-                  label="Send invite email"
-                />
-              </>
-            )}
+                    <TextField
+                      label="Locale" fullWidth
+                      value={form.locale || ''} onChange={bind('locale')}
+                    />
+                    <TextField
+                      label="Timezone" fullWidth
+                      value={form.timezone || ''} onChange={bind('timezone')}
+                    />
+                  </Stack>
+                </>
+              )}
 
-            {error && <Alert severity="error">{error}</Alert>}
-
-            <Stack direction="row" justifyContent="flex-end" spacing={1}>
-              <Button onClick={() => navigate('/admin/tenants')}>Cancel</Button>
-              <Button
-                type="submit" variant="contained" disabled={saving}
-                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : undefined}
+              <TextField
+                select label="Status" sx={{ maxWidth: 240 }}
+                value={statusValue}
+                onChange={(e) => setForm((f) => ({
+                  ...f,
+                  status: (e.target.value === 'active' ? 'active' : 'suspended') as Tenant['status'],
+                }))}
+                helperText={statusValue === 'inactive'
+                  ? 'Inactive tenants: every admin and employee under this tenant is blocked from signing in.'
+                  : undefined}
               >
-                {saving ? 'Saving…' : 'Save'}
-              </Button>
-            </Stack>
-          </Stack>
-        </form>
-      </Paper>
+                <MenuItem value="active">Active</MenuItem>
+                <MenuItem value="inactive">Inactive</MenuItem>
+              </TextField>
 
-      <Snackbar
-        open={!!toast}
-        autoHideDuration={4000}
-        onClose={() => setToast(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
-      </Snackbar>
+              {/* ---- Admin user (create-mode only) ---- */}
+              {!editing && (
+                <>
+                  <Divider sx={{ mt: 1 }} />
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                    Tenant admin user
+                  </Typography>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                    <TextField
+                      required={!!admin.admin_email}
+                      label="Admin first name" fullWidth
+                      value={admin.admin_name} onChange={bindAdmin('admin_name')}
+                    />
+                    <TextField
+                      label="Admin last name" fullWidth
+                      value={admin.admin_lname} onChange={bindAdmin('admin_lname')}
+                    />
+                  </Stack>
+                  <TextField
+                    required
+                    label="Admin email" type="email" fullWidth
+                    value={admin.admin_email} onChange={bindAdmin('admin_email')}
+                    helperText="One email does it all: receives the invite with a set-password link and becomes the tenant's contact email."
+                  />
+                  <TextField
+                    label="Admin username" fullWidth
+                    value={admin.admin_username} onChange={bindAdmin('admin_username')}
+                    placeholder={`${slugify(form.name || '') || 'slug'}admin`}
+                    helperText="Optional — defaults to <slug>admin on the backend."
+                  />
+                  <TextField
+                    label="Contact phone (optional)" fullWidth
+                    value={form.contact_phone || ''} onChange={bind('contact_phone')}
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={admin.send_invite}
+                        onChange={(_e, v) => setAdmin((a) => ({ ...a, send_invite: v }))}
+                      />
+                    }
+                    label="Send invite email (the admin sets their own password via the link)"
+                  />
+                </>
+              )}
+
+              {error && <Alert severity="error">{error}</Alert>}
+
+              <Stack direction="row" justifyContent="flex-end" spacing={1}>
+                <Button onClick={() => navigate('/admin/tenants')}>Cancel</Button>
+                <Button
+                  type="submit" variant="contained" disabled={saving}
+                  startIcon={saving ? <CircularProgress size={16} color="inherit" /> : undefined}
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </Button>
+              </Stack>
+            </Stack>
+          </form>
+        </Paper>
+
+        <Snackbar
+          open={!!toast}
+          autoHideDuration={4000}
+          onClose={() => setToast(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
+        </Snackbar>
+      </Box>
     </Box>
   );
 }

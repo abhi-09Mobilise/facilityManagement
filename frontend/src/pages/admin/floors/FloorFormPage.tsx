@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typography, Snackbar,
+} from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -7,6 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import { floorsApi } from '@/api/floors.api';
 import { sitesApi } from '@/api/sites.api';
 import { buildingsApi } from '@/api/buildings.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import { useMastersFilterOptional } from '@/contexts/MastersFilterContext';
 import type { Building, Floor, Site } from '@/types';
 
@@ -17,6 +19,8 @@ export default function FloorFormPage() {
   const filter = useMastersFilterOptional();
   const editing = id && id !== 'new';
 
+  // Navbar tenant/org scope: dropdown data respects the pickers.
+  const scope = useTenantScope();
   const [form, setForm] = useState<Partial<Floor>>({ status: 1 });
   const [sites, setSites] = useState<Site[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -25,6 +29,7 @@ export default function FloorFormPage() {
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Inline base64 upload, capped at ~1.5 MB. The image is the canvas
@@ -43,7 +48,7 @@ export default function FloorFormPage() {
   }
 
   useEffect(() => {
-    sitesApi.list({ limit: 200 }).then((r) => setSites(r.data?.data || []));
+    sitesApi.list({ limit: 200, tenant_id: scope.tenantId ?? undefined, organisation_id: scope.organisationId ?? undefined }).then((r) => setSites(r.data?.data || []));
     if (editing) {
       setLoading(true);
       floorsApi.list().then((r) => {
@@ -95,9 +100,13 @@ export default function FloorFormPage() {
         payload.site_id = form.site_id;
         payload.building_id = form.building_id;
       }
-      if (editing) await floorsApi.update(Number(id), payload);
-      else         await floorsApi.create(payload);
-      navigate(-1);
+      if (editing) { await floorsApi.update(Number(id), payload); navigate(-1); }
+      else {
+        await floorsApi.create(payload);
+        // Product decision: success toast instead of a notification email.
+        setToast('Floor created');
+        setTimeout(() => navigate(-1), 900);
+      }
     } catch (err: unknown) {
       setError((err as { response?: { data?: { msg?: string } } })?.response?.data?.msg || 'Save failed');
     } finally { setSaving(false); }
@@ -106,7 +115,7 @@ export default function FloorFormPage() {
   if (loading) return <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box>;
 
   return (
-    <Box maxWidth={640}>
+    <Box maxWidth={640} mx="auto">
       <PageHeader title={editing ? `Edit floor #${id}` : 'New floor'} back="/admin/floors" />
       <Paper sx={{ p: 3 }}>
         <form onSubmit={submit}>
@@ -210,6 +219,14 @@ export default function FloorFormPage() {
           </Stack>
         </form>
       </Paper>
+          <Snackbar
+        open={!!toast}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setToast(null)}>{toast}</Alert>
+      </Snackbar>
     </Box>
   );
 }
