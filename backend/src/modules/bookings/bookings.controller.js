@@ -556,8 +556,9 @@ exports.create = asyncHandler(async function (req, res) {
               const layoutRaw = layoutRows[0].layout_json;
               const layout = typeof layoutRaw === 'string' ? JSON.parse(layoutRaw) : layoutRaw;
               const objs = (layout && Array.isArray(layout.objects)) ? layout.objects : [];
+              const chairObjs = objs.filter((o) => o && o.type === 'chair');
               const vipSet = new Set(
-                objs.filter((o) => o && o.type === 'chair' && o.isVip).map((o) => String(o.id))
+                chairObjs.filter((o) => o.isVip).map((o) => String(o.id))
               );
               const vipClash = claimed.find((id) => vipSet.has(id));
               if (vipClash) {
@@ -565,8 +566,24 @@ exports.create = asyncHandler(async function (req, res) {
                 e._deskId = vipClash;
                 throw e;
               }
+              // T1.3 — DESK_UNKNOWN. Every claimed desk_id MUST exist in
+              // the facility's current layout. Prevents silent garbage
+              // when a client (browser, integration, or mistyped payload)
+              // sends an id for a chair that was never in the layout or
+              // has since been deleted. Applies to CREATE only; existing
+              // bookings that reference orphan ids stay reschedulable via
+              // /reschedule (which keeps their desk_id) so we don't
+              // suddenly break historical bookings.
+              const knownSet = new Set(chairObjs.map((o) => String(o.id)));
+              const unknownDesk = claimed.find((id) => !knownSet.has(id));
+              if (unknownDesk) {
+                const e = new Error('DESK_UNKNOWN');
+                e._deskId = unknownDesk;
+                throw e;
+              }
             } catch (parseErr) {
               if (parseErr && parseErr.message === 'DESK_VIP') throw parseErr;
+              if (parseErr && parseErr.message === 'DESK_UNKNOWN') throw parseErr;
               // Malformed layout JSON - log and fall through; we'd
               // rather book than block on a parse failure.
               console.error('[bookings.create] layout_json parse failed for vip check:', parseErr && parseErr.message);
@@ -640,6 +657,16 @@ exports.create = asyncHandler(async function (req, res) {
         res,
         `Chair ${e._deskId} is reserved and can't be booked.`,
         403
+      );
+    }
+    if (e && e.message === 'DESK_UNKNOWN') {
+      // T1.3 - client sent an id for a chair that isn't in the facility's
+      // layout (never was, or was deleted after the client cached it).
+      // 400 because it's a client-payload problem, not a race.
+      return fail(
+        res,
+        `Chair ${e._deskId} does not exist in this facility. Please refresh and pick a chair from the current layout.`,
+        400
       );
     }
     throw e;

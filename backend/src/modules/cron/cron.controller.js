@@ -5,11 +5,19 @@
 // normal auth middleware — instead each request must carry a shared
 // secret via ?key=<CRON_SECRET>. Without that secret the endpoint 401s.
 //
-// Today there's one job:
-//   POST /api/cron/pre-end-notify    fires the per-facility "booking ends
-//                                    in N min" mail to the cleanup chain.
+// Today there are two jobs:
+//   POST /api/cron/pre-end-notify         fires the per-facility "booking
+//                                         ends in N min" mail to the
+//                                         cleanup chain.
+//   POST /api/cron/aggregate-occupancy    (T1.4) rebuilds yesterday's row
+//                                         in `occupancy_daily` for every
+//                                         facility. Idempotent — safe to
+//                                         re-run for the same day.
+//                                         Optional ?day=YYYY-MM-DD lets an
+//                                         operator rebuild a specific past
+//                                         day (used by the backfill script).
 //
-// Add new jobs alongside it (e.g. nightly digests, stale-token cleanup)
+// Add new jobs alongside these (e.g. nightly digests, stale-token cleanup)
 // rather than spinning up a separate scheduler service.
 
 const { query, execute } = require('../../db/pool');
@@ -17,6 +25,7 @@ const { ok, fail } = require('../../utils/response');
 const asyncHandler = require('../../utils/asyncHandler');
 const mailer = require('../../utils/mailer');
 const { resolveRecipients } = require('../bookings/chainMaterializer');
+const occupancyAggregator = require('../../jobs/occupancyAggregator');
 
 // Shared secret middleware. Reject without it so a casual external caller
 // can't trigger N mails. The secret lives in .env (CRON_SECRET).
@@ -139,4 +148,41 @@ exports.preEndNotify = asyncHandler(async function (req, res) {
   const elapsed = Date.now() - startedAt;
   console.log(`[cron.preEndNotify] scanned=${due.length}  notified=${notified}  failures=${failures}  elapsed=${elapsed}ms`);
   return ok(res, { scanned: due.length, notified, failures, elapsed_ms: elapsed });
+});
+
+
+// ----- aggregate-occupancy (T1.4) -------------------------------------
+//
+// Rebuilds one day of the `occupancy_daily` rollup for every active
+// facility. Default day = yesterday. An operator can pass ?day=YYYY-MM-DD
+// to rebuild a specific historical day (e.g. after fixing a bug in the
+// aggregation SQL).
+//
+// The aggregator's own SQL uses INSERT ... ON DUPLICATE KEY UPDATE keyed
+// on (day, facility_id, department_id), so this endpoint is fully
+// idempotent — running it 10 times for the same day produces the same
+// result as running it once.
+//
+// External scheduler cadence: run once nightly (recommended 02:00 server
+// time). If a run is missed, the next night's run only covers ITS
+// yesterday, so the missed day stays stale. To catch up, the operator
+// posts to this endpoint with ?day=<missed-date>. The 90-day backfill
+// script (T1.5) uses the same mechanism.
+exports.aggregateOccupancy = asyncHandler(async function (req, res) {
+  const startedAt = Date.now();
+  const dayParam = String(req.query.day || '').trim();
+  const day = dayParam || null;   // null → aggregator picks yesterday
+
+  const summary = day
+    ? await occupancyAggregator.aggregateDay(day)
+    : await occupancyAggregator.aggregateYesterday();
+
+  const elapsed = Date.now() - startedAt;
+  console.log(
+    `[cron.aggregateOccupancy] day=${summary.day} ` +
+    `facilities=${summary.facilities_processed} ` +
+    `rows_upserted=${summary.rows_upserted} ` +
+    `failures=${summary.failures} elapsed=${elapsed}ms`
+  );
+  return ok(res, { ...summary, elapsed_ms: elapsed });
 });

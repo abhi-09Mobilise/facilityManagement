@@ -30,7 +30,7 @@ import {
   Upload, Grid3x3, Trash2, RotateCw, MousePointer2,
   Square, Circle, Armchair, DoorOpen, TreePine, Sofa,
   Maximize2, X, LayoutDashboard, Wand2, Loader2, Undo2,
-  ChevronUp, ChevronDown, HelpCircle,
+  ChevronUp, ChevronDown, HelpCircle, Copy,
 } from 'lucide-react';
 
 // Default canvas size: 12m × 8m at 60 px/m = 720 × 480 px.
@@ -208,10 +208,119 @@ export interface DeskLayoutEditorProps {
 }
 
 type DragMode =
-  | { kind: 'move'; id: string; dx: number; dy: number }
+  | { kind: 'move'; id: string; dx: number; dy: number; wasSelected: boolean }
   | { kind: 'resize'; id: string; handle: ResizeHandle; ox: number; oy: number; ow: number; oh: number };
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+// ------------------------------------------------------------------
+// Detection-overlay LOD (level-of-detail) helpers
+// ------------------------------------------------------------------
+// These decide how each detection is rendered on the canvas so a
+// dense floor plan with many detections stays readable. Purely
+// visual — never affects stored bounding-box coordinates, hit
+// area, or any interaction. See the DISPLAY panel comment inside
+// the component for user-facing behaviour.
+
+type LodTier = 'dot' | 'icon' | 'detail';
+
+// Detection-marker "pin" colours — three visually distinct hues so
+// chair vs round table vs rect table are instantly identifiable on
+// a busy floor plan. Warm-brown wash from earlier iterations was
+// hard to read against warm floor-plan lines.
+const PIN_COLOR_CHAIR       = '#2563eb'; // blue
+const PIN_COLOR_TABLE_ROUND = '#059669'; // emerald green
+const PIN_COLOR_TABLE_RECT  = '#ea580c'; // orange
+
+// Screen-size thresholds in CSS pixels. Below these an object cannot
+// meaningfully render its full shape / label on screen.
+const SCREEN_DOT_MAX  = 8;   // < 8 CSS px on screen -> Dot
+const SCREEN_ICON_MAX = 18;  // 8-18 CSS px -> Icon; >= 18 CSS px -> Detail
+
+// Local-crowding downgrade threshold. A chair with >= this many
+// centroid-neighbours in the spatial grid is considered to sit in a
+// crowded pocket and gets one tier of simplification (never more).
+// A typical round table + 4 chairs gives each chair ~3-4 neighbours,
+// well below this threshold so normal tables stay in full Detail.
+const CROWD_DENSE = 8;
+
+// Spatial-grid cell size for the neighbour index. Roughly one full
+// chair width. Scaled with the layout's px-per-metre so denser
+// scales get finer cells.
+function cellSizeFor(pxPerMeter: number): number {
+  return Math.max(30, pxPerMeter);
+}
+
+// Baseline tier from an object's real on-screen size in CSS px.
+function screenTier(screenPx: number, type: LayoutObjectType): LodTier {
+  // Tables use a simpler 2-tier scale (dot / detail) because their
+  // internal texture is only meaningful at reasonable sizes.
+  if (type === 'table_round' || type === 'table_rect') {
+    return screenPx < 12 ? 'dot' : 'detail';
+  }
+  // Chairs use the full 3-tier scale.
+  if (screenPx < SCREEN_DOT_MAX)  return 'dot';
+  if (screenPx < SCREEN_ICON_MAX) return 'icon';
+  return 'detail';
+}
+
+// Final LOD picker. Combines screen-size baseline with a bounded
+// crowding downgrade. Hover / selection always short-circuit to
+// Detail so the user can interact with a dot and immediately see
+// its full representation.
+function lodForObject(
+  type: LayoutObjectType,
+  screenPx: number,
+  neighbourCount: number,
+  selected: boolean,
+  hovered: boolean,
+  detailMode: 'auto' | 'always',
+): LodTier {
+  if (selected || hovered) return 'detail';
+  if (detailMode === 'always') return 'detail';
+
+  const baseline = screenTier(screenPx, type);
+
+  // Crowding is a SOFT, bounded influence: at most one tier downgrade.
+  // A large clearly-visible chair (Detail baseline) can drop to Icon
+  // in a dense pocket, but never straight to Dot. See PR discussion.
+  if (neighbourCount >= CROWD_DENSE) {
+    if (baseline === 'detail') return 'icon';
+    if (baseline === 'icon')   return 'dot';
+  }
+  return baseline;
+}
+
+// Build an in-memory spatial grid keyed by cell coordinates. O(n)
+// construction, O(k) neighbour lookup where k is the number of
+// objects in the target cell + 8 adjacent cells (typically 1-30).
+// Rebuilt only when the object list identity changes.
+function buildSpatialIndex(objects: LayoutObject[], cellSize: number) {
+  const grid = new Map<string, number>(); // "cy:cx" -> count
+  for (const o of objects) {
+    const w = o.w ?? 0;
+    const h = o.h ?? 0;
+    const cx = Math.max(0, Math.floor((o.x + w / 2) / cellSize));
+    const cy = Math.max(0, Math.floor((o.y + h / 2) / cellSize));
+    const key = `${cy}:${cx}`;
+    grid.set(key, (grid.get(key) || 0) + 1);
+  }
+  return function neighbourCount(o: LayoutObject): number {
+    const w = o.w ?? 0;
+    const h = o.h ?? 0;
+    const cx = Math.max(0, Math.floor((o.x + w / 2) / cellSize));
+    const cy = Math.max(0, Math.floor((o.y + h / 2) / cellSize));
+    let n = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        n += grid.get(`${cy + dy}:${cx + dx}`) || 0;
+      }
+    }
+    // Subtract self — the object counts itself in its own cell.
+    return Math.max(0, n - 1);
+  };
+}
+
 
 export default function DeskLayoutEditor({
   value, onChange, capacity, floorImageUrl, facilityType = 'desk',
@@ -240,6 +349,52 @@ export default function DeskLayoutEditor({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragMode | null>(null);
+  // Ref mirror of `drag` — updated synchronously so hover handlers can
+  // read the freshest drag state without waiting for React to re-render.
+  // Prevents "other object pops on cursor drift right after mousedown"
+  // caused by stale-closure reads.
+  const dragRef = useRef<DragMode | null>(null);
+
+  // Hover state — drives "show label on hover" for detection markers so
+  // dense floor plans (dozens/hundreds of chairs) don't drown in labels.
+  // Purely a UI concern, never persisted / never sent to backend.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  // Display options for detection overlays. Preserved in localStorage
+  // per user (not per layout) so the admin's chosen view stays stable
+  // between sessions. NEVER modifies the underlying detection data or
+  // bounding-box coordinates — this only controls visual presentation.
+  //   chairsVisible/roundVisible/rectVisible: layer show/hide (scan items only)
+  //   labelSize: 0.75 S | 1.0 M | 1.25 L — scales the hover/select label font
+  //   detailMode: 'auto' → screen-size + crowding drive dot/icon/detail tiers
+  //               'always' → every detection renders at full Detail (opt-out)
+  const [displayOpts, setDisplayOpts] = useState<{
+    chairsVisible: boolean; roundVisible: boolean; rectVisible: boolean;
+    labelSize: number; detailMode: 'auto' | 'always';
+    // Single S/M/L slot drives BOTH pin size (in Auto mode) and symbol
+    // size (in Always-full mode). The two modes are mutually exclusive,
+    // so one control is enough — the label switches at render time.
+    sizeChoice: 'S' | 'M' | 'L';
+  }>(() => {
+    const defaults = { chairsVisible: true, roundVisible: true, rectVisible: true, labelSize: 1.0, detailMode: 'auto' as const, sizeChoice: 'M' as const };
+    try {
+      const raw = localStorage.getItem('fm_layout_display_opts');
+      if (raw) return { ...defaults, ...JSON.parse(raw) };
+    } catch { /* fall through */ }
+    return defaults;
+  });
+  useEffect(() => {
+    try { localStorage.setItem('fm_layout_display_opts', JSON.stringify(displayOpts)); } catch { /* ignore quota errors */ }
+  }, [displayOpts]);
+
+  // Live conversion factor: 1 SVG unit → N CSS pixels on the user's
+  // screen right now. Feeds the LOD picker so a chair at 40 SVG px
+  // knows whether it's rendering as 40, 20, or 5 real pixels.
+  // Initialised optimistically to 1.0 so the first paint uses the
+  // Detail tier — no page of dots blooming into shapes. Real value
+  // is set by the ResizeObserver effect that runs AFTER svgRef is
+  // populated (see below, right after svgRef is declared).
+  const [pxPerSvgUnit, setPxPerSvgUnit] = useState(1);
 
   // OpenCV auto-detect state. We fire detection automatically after a
   // floor-plan upload (user's pick over "manual button"). The overlay
@@ -302,9 +457,85 @@ export default function DeskLayoutEditor({
   const W = Math.round(layout.widthM  * layout.pxPerMeter);
   const H = Math.round(layout.heightM * layout.pxPerMeter);
 
+  // Populate pxPerSvgUnit from the actual SVG element size on screen.
+  // Runs after svgRef is populated (svgRef declared above at line ~423).
+  // Uses ResizeObserver so modal resize, sidebar collapse, and window
+  // resize all re-measure. Debounced implicitly by the browser.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      const vbW = el.viewBox && el.viewBox.baseVal ? el.viewBox.baseVal.width : W;
+      if (rect.width > 0 && vbW > 0) setPxPerSvgUnit(rect.width / vbW);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // Re-hook whenever the editor opens (svgRef changes) or the
+    // viewBox width changes so the ratio stays accurate.
+  }, [editorOpen, W]);
+
+  // Spatial index for local-crowding-aware LOD. Rebuilt only when the
+  // object list identity changes (add, remove, drag-commit, scan
+  // merge, undo scan). Hover / select / display-toggle changes do NOT
+  // rebuild — those flow through render only.
+  const neighbourCountFor = useMemo(() => {
+    return buildSpatialIndex(layout.objects, cellSizeFor(layout.pxPerMeter));
+  }, [layout.objects, layout.pxPerMeter]);
+
+  // Backfill sequential labels for tables that don't have one saved yet
+  // (legacy layouts created before table labels existed). Newly added and
+  // newly scanned tables already carry a label from allocation time, so
+  // this map only fills the missing entries. Purely a render-time compute;
+  // no state mutation, no persistence.
+  const tableLabelFallback = useMemo(() => {
+    const map = new Map<string, string>();
+    const usedR = new Set<number>();
+    const usedT = new Set<number>();
+    for (const o of layout.objects) {
+      if (o.type === 'table_round') {
+        const m = /^R-(\d+)$/.exec(o.label || '');
+        if (m) usedR.add(parseInt(m[1], 10));
+      } else if (o.type === 'table_rect') {
+        const m = /^T-(\d+)$/.exec(o.label || '');
+        if (m) usedT.add(parseInt(m[1], 10));
+      }
+    }
+    let nextR = 1, nextT = 1;
+    for (const o of layout.objects) {
+      if (o.label) continue;
+      if (o.type === 'table_round') {
+        while (usedR.has(nextR)) nextR++;
+        map.set(o.id, 'R-' + String(nextR).padStart(2, '0'));
+        usedR.add(nextR);
+      } else if (o.type === 'table_rect') {
+        while (usedT.has(nextT)) nextT++;
+        map.set(o.id, 'T-' + String(nextT).padStart(2, '0'));
+        usedT.add(nextT);
+      }
+    }
+    return map;
+  }, [layout.objects]);
+
+  // Ref that always mirrors the latest layout. Updated SYNCHRONOUSLY inside
+  // commit/commitLocal so the drag mouseup handler and the drag mousemove
+  // handler can always read the freshest layout without waiting for React
+  // to commit the render. Also lets the drag effect avoid re-subscribing
+  // its window listeners on every frame.
+  const layoutRef = useRef(layout);
+  useEffect(() => { layoutRef.current = layout; }, [layout]); // safety net
   function commit(next: FacilityLayout) {
+    layoutRef.current = next;
     setLayout(next);
     onChange(next);
+  }
+  // Local (silent) commit: writes to state without notifying the parent.
+  // Used during a drag so parent-side work doesn't run on every frame.
+  function commitLocal(next: FacilityLayout) {
+    layoutRef.current = next;
+    setLayout(next);
   }
 
   // Just resize the canvas - the perimeter wall auto-reframe is intentionally
@@ -330,25 +561,66 @@ export default function DeskLayoutEditor({
                : type === 'wall'  ? defaultSizes.wall.h
                : preset.h;
     // Chairs get a sequential bookable id (C-01, C-02, …) so the booker-
-    // side picker can show "Chair X is taken/free". Everything else gets
-    // a random obj-XXXX id since the booker doesn't need to address it.
+    // side picker can show "Chair X is taken/free". Tables get a random
+    // internal id + a human-readable sequential label (R-01 for round,
+    // T-01 for rectangular) so hovering a table reveals its name in the
+    // same way chairs do. Everything else uses the preset label.
     let id: string;
     let label: string | undefined;
     if (type === 'chair') {
-      // First-available slot: scan existing C-NN ids, pick the smallest
-      // positive integer that isn't taken. Deleting C-02 from
-      // {C-01, C-02, C-03} and then adding a new chair gives C-02 back
-      // (instead of producing a duplicate C-03).
-      const used = new Set<number>();
+      // T1.2 — Chairs get TWO identifiers:
+      //
+      //   id     = stable internal, facility-scoped, permanent.
+      //            Format `FAC<facilityId>-D<seq>` (e.g. FAC1432-D05).
+      //            For UNSAVED facilities: `NEW-D<seq>` — the T1.1
+      //            backfill rewrites NEW-D → FAC<realId>-D on first save.
+      //            Never shown to bookers, never editable by admin, used
+      //            as the FK from `bookings.desk_id`.
+      //
+      //   label  = short friendly display name (`C-01`, `C-02`, ...).
+      //            Editable in the sidebar. Shown on the canvas and in
+      //            the DeskPicker. Admin can rename to anything they want
+      //            (e.g. "North Window Seat"). Renaming never affects
+      //            historical bookings — those are keyed by `id`.
+      //
+      // Both allocators scan the existing layout for used seq numbers
+      // (id: look at "-D<N>" suffix and legacy "C-<N>" ids so mid-
+      // migration layouts don't produce duplicates; label: look at
+      // "^C-<N>$" labels). Both recycle after delete.
+      const usedIdSeq = new Set<number>();
+      const usedLabelSeq = new Set<number>();
       for (const o of layout.objects) {
         if (o.type !== 'chair') continue;
-        const m = /^C-(\d+)$/.exec(o.id || '');
+        const rawId = o.id || '';
+        const legacy = /^C-(\d+)$/.exec(rawId);
+        if (legacy) { usedIdSeq.add(parseInt(legacy[1], 10)); }
+        else {
+          const stable = /-D(\d+)$/.exec(rawId);
+          if (stable) usedIdSeq.add(parseInt(stable[1], 10));
+        }
+        const labelMatch = /^C-(\d+)$/.exec(o.label || '');
+        if (labelMatch) usedLabelSeq.add(parseInt(labelMatch[1], 10));
+      }
+      let idN = 1;    while (usedIdSeq.has(idN))    idN++;
+      let labelN = 1; while (usedLabelSeq.has(labelN)) labelN++;
+      const idSeq    = String(idN).padStart(2, '0');
+      const labelSeq = String(labelN).padStart(2, '0');
+      const prefix = facilityId ? `FAC${facilityId}` : 'NEW';
+      id = `${prefix}-D${idSeq}`;
+      label = `C-${labelSeq}`;
+    } else if (type === 'table_round' || type === 'table_rect') {
+      const prefix = type === 'table_round' ? 'R-' : 'T-';
+      const re = new RegExp('^' + prefix + '(\\d+)$');
+      const used = new Set<number>();
+      for (const o of layout.objects) {
+        if (o.type !== type) continue;
+        const m = re.exec(o.label || '');
         if (m) used.add(parseInt(m[1], 10));
       }
       let n = 1;
       while (used.has(n)) n++;
-      id = 'C-' + String(n).padStart(2, '0');
-      label = id;
+      id = 'obj-' + Math.random().toString(36).slice(2, 8);
+      label = prefix + String(n).padStart(2, '0');
     } else {
       id = 'obj-' + Math.random().toString(36).slice(2, 8);
       label = preset.label || undefined;
@@ -409,6 +681,9 @@ export default function DeskLayoutEditor({
     });
   }
 
+  // Called from keyboard arrow keys. The drag path is inline in the drag
+  // useEffect below and does not call this function. Positions round to
+  // whole pixels — no grid snap — so nudges are pixel-accurate.
   function moveObject(id: string, x: number, y: number) {
     const obj = layout.objects.find((o) => o.id === id);
     if (!obj) return;
@@ -417,44 +692,18 @@ export default function DeskLayoutEditor({
     // Perimeter walls only slide along their long axis.
     let nx: number, ny: number;
     if (obj.perimeter && (obj.side === 'top' || obj.side === 'bottom')) {
-      nx = Math.max(0, Math.min(W - ow, snap(x, layout.snapPx)));
+      nx = Math.max(0, Math.min(W - ow, Math.round(x)));
       ny = obj.y;
     } else if (obj.perimeter && (obj.side === 'left' || obj.side === 'right')) {
       nx = obj.x;
-      ny = Math.max(0, Math.min(H - oh, snap(y, layout.snapPx)));
+      ny = Math.max(0, Math.min(H - oh, Math.round(y)));
     } else {
-      nx = Math.max(0, Math.min(W - ow, snap(x, layout.snapPx)));
-      ny = Math.max(0, Math.min(H - oh, snap(y, layout.snapPx)));
+      nx = Math.max(0, Math.min(W - ow, Math.round(x)));
+      ny = Math.max(0, Math.min(H - oh, Math.round(y)));
     }
     commit({
       ...layout,
       objects: layout.objects.map((o) => (o.id === id ? { ...o, x: nx, y: ny } : o)),
-    });
-  }
-
-  function resizeObject(id: string, handle: ResizeHandle, x: number, y: number, ox: number, oy: number, ow: number, oh: number) {
-    const obj = layout.objects.find((o) => o.id === id);
-    if (!obj) return;
-    let nx = ox, ny = oy, nw = ow, nh = oh;
-    const minSz = 8;
-    if (handle.includes('e')) nw = Math.max(minSz, snap(x - ox, layout.snapPx));
-    if (handle.includes('s')) nh = Math.max(minSz, snap(y - oy, layout.snapPx));
-    if (handle.includes('w')) {
-      const right = ox + ow;
-      nx = Math.min(right - minSz, snap(x, layout.snapPx));
-      nw = right - nx;
-    }
-    if (handle.includes('n')) {
-      const bot = oy + oh;
-      ny = Math.min(bot - minSz, snap(y, layout.snapPx));
-      nh = bot - ny;
-    }
-    // Clamp to canvas bounds
-    nx = Math.max(0, nx); ny = Math.max(0, ny);
-    nw = Math.min(W - nx, nw); nh = Math.min(H - ny, nh);
-    commit({
-      ...layout,
-      objects: layout.objects.map((o) => o.id === id ? { ...o, x: nx, y: ny, w: nw, h: nh } : o),
     });
   }
 
@@ -469,17 +718,77 @@ export default function DeskLayoutEditor({
 
   useEffect(() => {
     if (!drag) return;
+    let dirty = false;
+    function applyMove(p: { x: number; y: number }) {
+      // Read layout from ref (updated synchronously by commitLocal) — this
+      // lets the effect subscribe listeners just once per drag session
+      // instead of re-subscribing on every commit.
+      const cur = layoutRef.current;
+      const obj = cur.objects.find((o) => o.id === drag!.id);
+      if (!obj) return;
+      const ow = obj.w || 60;
+      const oh = obj.h || 60;
+      let nx: number, ny: number;
+      if (obj.perimeter && (obj.side === 'top' || obj.side === 'bottom')) {
+        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - drag!.dx)));
+        ny = obj.y;
+      } else if (obj.perimeter && (obj.side === 'left' || obj.side === 'right')) {
+        nx = obj.x;
+        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - drag!.dy)));
+      } else {
+        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - drag!.dx)));
+        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - drag!.dy)));
+      }
+      commitLocal({
+        ...cur,
+        objects: cur.objects.map((o) => (o.id === drag!.id ? { ...o, x: nx, y: ny } : o)),
+      });
+    }
+    function applyResize(p: { x: number; y: number }, d: Extract<DragMode, { kind: 'resize' }>) {
+      const cur = layoutRef.current;
+      const obj = cur.objects.find((o) => o.id === d.id);
+      if (!obj) return;
+      let nx = d.ox, ny = d.oy, nw = d.ow, nh = d.oh;
+      const minSz = 8;
+      if (d.handle.includes('e')) nw = Math.max(minSz, Math.round(p.x - d.ox));
+      if (d.handle.includes('s')) nh = Math.max(minSz, Math.round(p.y - d.oy));
+      if (d.handle.includes('w')) {
+        const right = d.ox + d.ow;
+        nx = Math.min(right - minSz, Math.round(p.x));
+        nw = right - nx;
+      }
+      if (d.handle.includes('n')) {
+        const bot = d.oy + d.oh;
+        ny = Math.min(bot - minSz, Math.round(p.y));
+        nh = bot - ny;
+      }
+      nx = Math.max(0, nx); ny = Math.max(0, ny);
+      nw = Math.min(W - nx, nw); nh = Math.min(H - ny, nh);
+      commitLocal({
+        ...cur,
+        objects: cur.objects.map((o) => o.id === d.id ? { ...o, x: nx, y: ny, w: nw, h: nh } : o),
+      });
+    }
     function onMove(e: MouseEvent) {
       const p = svgPoint(e.clientX, e.clientY);
       if (!p) return;
-      if (drag!.kind === 'move') {
-        moveObject(drag!.id, p.x - drag!.dx, p.y - drag!.dy);
-      } else {
-        const d = drag!;
-        resizeObject(d.id, d.handle, p.x, p.y, d.ox, d.oy, d.ow, d.oh);
-      }
+      if (drag!.kind === 'move') applyMove(p);
+      else applyResize(p, drag!);
+      dirty = true;
     }
-    function onUp() { setDrag(null); }
+    function onUp() {
+      // Fire a single onChange with the final drag position so the parent
+      // sees exactly one update per drag instead of one per frame.
+      if (dirty) onChange(layoutRef.current);
+      // Toggle-off on plain click: if the mouse never moved during this
+      // hold AND the object was already selected when mousedown fired,
+      // treat this as a "click again to deselect" → hide selection UI.
+      else if (drag!.kind === 'move' && drag!.wasSelected) {
+        setSelectedId(null);
+      }
+      dragRef.current = null;   // clear sync ref FIRST
+      setDrag(null);            // then React state
+    }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => {
@@ -487,7 +796,7 @@ export default function DeskLayoutEditor({
       window.removeEventListener('mouseup', onUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag, layout]);
+  }, [drag]);
 
   // Keyboard shortcuts when an object is selected.
   useEffect(() => {
@@ -561,59 +870,148 @@ export default function DeskLayoutEditor({
       }
 
       // Canvas is rendered at (widthM * pxPerMeter, heightM * pxPerMeter).
-      // The detector returned coords in original-image pixels. Scale.
+      // The image is displayed with preserveAspectRatio="xMidYMid meet" —
+      // scaled uniformly to fit inside the canvas and centred (letterboxed
+      // on the shorter axis). Detection coordinates therefore map onto the
+      // displayed image using the SAME uniform scale + letterbox offset.
       const canvasW = baseline.widthM * baseline.pxPerMeter;
       const canvasH = baseline.heightM * baseline.pxPerMeter;
-      const sx = canvasW / Math.max(1, data.image_width);
-      const sy = canvasH / Math.max(1, data.image_height);
+      const imgW = Math.max(1, data.image_width);
+      const imgH = Math.max(1, data.image_height);
+      const imgScale = Math.min(canvasW / imgW, canvasH / imgH);
+      const dispW   = imgW * imgScale;
+      const dispH   = imgH * imgScale;
+      const letterX = (canvasW - dispW) / 2;
+      const letterY = (canvasH - dispH) / 2;
+      // Sensible caps (canvas px) so a giant bbox never produces a 5-meter
+      // chair or a wall-to-wall table.
+      const CHAIR_MIN_PX = 20;
+      const TABLE_ROUND_MIN_PX  = 60;
+      const TABLE_ROUND_MAX_PX  = 240;
+      const TABLE_RECT_MIN_W_PX = 60;
+      const TABLE_RECT_MAX_W_PX = 500;
+      const TABLE_RECT_MIN_H_PX = 40;
+      const TABLE_RECT_MAX_H_PX = 400;
+      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-      // First-available chair-id allocator, identical to addObject('chair').
-      const usedNums = new Set<number>();
+      // T1.2 — AI-detected chairs get two allocators, same split as
+      // addObject('chair'):
+      //   idAlloc()    → stable internal `FAC<facilityId>-D<seq>`
+      //   labelAlloc() → short friendly `C-<seq>` display name
+      // Both scan the baseline layout for used sequence numbers so a
+      // re-scan of the same plan doesn't produce duplicates. Both
+      // recycle after delete.
+      const usedIdNums = new Set<number>();
+      const usedLabelNums = new Set<number>();
       for (const o of baseline.objects) {
         if (o.type !== 'chair') continue;
-        const m = /^C-(\d+)$/.exec(o.id || '');
-        if (m) usedNums.add(parseInt(m[1], 10));
+        const raw = o.id || '';
+        const legacy = /^C-(\d+)$/.exec(raw);
+        if (legacy) { usedIdNums.add(parseInt(legacy[1], 10)); }
+        else {
+          const stable = /-D(\d+)$/.exec(raw);
+          if (stable) usedIdNums.add(parseInt(stable[1], 10));
+        }
+        const labelMatch = /^C-(\d+)$/.exec(o.label || '');
+        if (labelMatch) usedLabelNums.add(parseInt(labelMatch[1], 10));
       }
+      const chairIdPrefix = facilityId ? `FAC${facilityId}` : 'NEW';
       function nextChairId(): string {
-        let n = 1; while (usedNums.has(n)) n++;
-        usedNums.add(n);
-        return 'C-' + String(n).padStart(2, '0');
+        let n = 1; while (usedIdNums.has(n)) n++;
+        usedIdNums.add(n);
+        return `${chairIdPrefix}-D${String(n).padStart(2, '0')}`;
+      }
+      function nextChairLabel(): string {
+        let n = 1; while (usedLabelNums.has(n)) n++;
+        usedLabelNums.add(n);
+        return `C-${String(n).padStart(2, '0')}`;
       }
       function randId(prefix: string) { return prefix + '-' + Math.random().toString(36).slice(2, 8); }
+
+      // Same "first-available N" allocator, but keyed by table type + label.
+      // Round tables get R-01, R-02, ... and rect tables get T-01, T-02, ...
+      // so hovering any table reveals a human-readable name just like chairs.
+      function nextTableLabel(type: 'table_round' | 'table_rect'): string {
+        const prefix = type === 'table_round' ? 'R-' : 'T-';
+        const re = new RegExp('^' + prefix + '(\\d+)$');
+        const used = new Set<number>();
+        for (const o of baseline.objects) {
+          if (o.type === type) {
+            const m = re.exec(o.label || '');
+            if (m) used.add(parseInt(m[1], 10));
+          }
+        }
+        for (const o of added) {
+          if (o.type === type) {
+            const m = re.exec(o.label || '');
+            if (m) used.add(parseInt(m[1], 10));
+          }
+        }
+        let n = 1; while (used.has(n)) n++;
+        return prefix + String(n).padStart(2, '0');
+      }
 
       const added: LayoutObject[] = [];
 
       for (const c of data.chairs) {
         const id = nextChairId();
+        const label = nextChairLabel();
+        // Use YOLO's CENTER for position, but the admin's DEFAULT chair size
+        // for dimensions. YOLO bboxes include padding around the object, so
+        // scaling the raw bbox produces oversized chairs that obscure the
+        // underlying image. Standard chair size matches manual placement so
+        // scanned chairs and hand-placed chairs look identical.
+        // Detection positions are NOT snapped to the grid — snapping the
+        // top-left to a 20-px step would shift the visible centre by up to
+        // ±10 px per axis and misalign the marker from the actual furniture.
+        const cw = Math.max(CHAIR_MIN_PX, defaultSizes.chair.w);
+        const ch = Math.max(CHAIR_MIN_PX, defaultSizes.chair.h);
+        const cxCanvas = letterX + (c.x + c.w / 2) * imgScale;
+        const cyCanvas = letterY + (c.y + c.h / 2) * imgScale;
         added.push({
           id, type: 'chair',
-          x: Math.round(c.x * sx),
-          y: Math.round(c.y * sy),
-          w: Math.max(20, Math.round(c.w * sx)),
-          h: Math.max(20, Math.round(c.h * sy)),
-          rot: 0, label: id, _fromScan: true,
+          x: Math.round(cxCanvas - cw / 2),
+          y: Math.round(cyCanvas - ch / 2),
+          w: cw,
+          h: ch,
+          rot: 0, label, _fromScan: true,
         });
       }
       for (const t of data.tables_round) {
-        const diameterPx = Math.max(30, Math.round(2 * t.r * Math.min(sx, sy)));
+        // Uniform scale + min/max caps so an oversized bbox doesn't produce
+        // a wall-to-wall table. Position uses YOLO's reported centre.
+        // Not snapped — same reason as chairs.
+        const diameterPx = clamp(
+          Math.round(2 * t.r * imgScale),
+          TABLE_ROUND_MIN_PX, TABLE_ROUND_MAX_PX
+        );
         added.push({
           id: randId('obj'),
           type: 'table_round',
-          x: Math.round(t.cx * sx - diameterPx / 2),
-          y: Math.round(t.cy * sy - diameterPx / 2),
+          x: Math.round(letterX + t.cx * imgScale - diameterPx / 2),
+          y: Math.round(letterY + t.cy * imgScale - diameterPx / 2),
           w: diameterPx, h: diameterPx, rot: 0,
+          label: nextTableLabel('table_round'),
           _fromScan: true,
         });
       }
       for (const t of data.tables_rect) {
+        // Uniform scale + caps for the same reason as round tables. Position
+        // uses YOLO's bbox centre. Not snapped — same reason as chairs.
+        const tw = clamp(Math.round(t.w * imgScale), TABLE_RECT_MIN_W_PX, TABLE_RECT_MAX_W_PX);
+        const th = clamp(Math.round(t.h * imgScale), TABLE_RECT_MIN_H_PX, TABLE_RECT_MAX_H_PX);
+        const cxCanvas = letterX + (t.x + t.w / 2) * imgScale;
+        const cyCanvas = letterY + (t.y + t.h / 2) * imgScale;
         added.push({
           id: randId('obj'),
           type: 'table_rect',
-          x: Math.round(t.x * sx),
-          y: Math.round(t.y * sy),
-          w: Math.max(30, Math.round(t.w * sx)),
-          h: Math.max(20, Math.round(t.h * sy)),
-          rot: 0, _fromScan: true,
+          x: Math.round(cxCanvas - tw / 2),
+          y: Math.round(cyCanvas - th / 2),
+          w: tw,
+          h: th,
+          rot: 0,
+          label: nextTableLabel('table_rect'),
+          _fromScan: true,
         });
       }
 
@@ -956,11 +1354,189 @@ export default function DeskLayoutEditor({
                     <div className="flex items-center gap-1 mb-1"><Square className="h-3 w-3" /> handles to resize</div>
                     <div className="flex items-center gap-1"><Trash2 className="h-3 w-3" /> <kbd className="px-1 bg-card border rounded">Del</kbd> remove</div>
                   </div> */}
+
+                  {/* ===== Display panel =====
+                      Controls how detection overlays are RENDERED. Never
+                      modifies bounding boxes, coordinates, or detection
+                      data. Preferences persist per user via localStorage.
+                      Layer checkboxes only affect scan-added items
+                      (`_fromScan`); manually placed furniture is always
+                      shown regardless.  */}
+                  <div className="mt-3 pt-2 border-t space-y-2 text-[11px]">
+                    <div className="font-semibold text-muted-foreground uppercase tracking-wide">Display</div>
+                    <div className="text-foreground">Show detections</div>
+                    {([
+                      ['chairsVisible', 'chair',       'Chairs',       PIN_COLOR_CHAIR],
+                      ['roundVisible',  'table_round', 'Round tables', PIN_COLOR_TABLE_ROUND],
+                      ['rectVisible',   'table_rect',  'Rect tables',  PIN_COLOR_TABLE_RECT],
+                    ] as const).map(([key, type, label, pinColor]) => {
+                      const count = layout.objects.filter((o) => o._fromScan && o.type === type).length;
+                      const checked = displayOpts[key];
+                      return (
+                        <label key={key} className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setDisplayOpts((s) => ({ ...s, [key]: e.target.checked }))}
+                            className="h-3.5 w-3.5 accent-primary" />
+                          {/* Colour swatch matches the pin colour on the canvas. */}
+                          <span
+                            aria-hidden
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: pinColor }}
+                          />
+                          <span className="flex-1">{label}</span>
+                          <span className="text-muted-foreground tabular-nums">{count}</span>
+                        </label>
+                      );
+                    })}
+
+                    <div className="pt-1 text-foreground">Label size</div>
+                    <div className="flex gap-1">
+                      {([
+                        ['S', 0.75],
+                        ['M', 1.0],
+                        ['L', 1.25],
+                      ] as const).map(([label, val]) => {
+                        const active = Math.abs(displayOpts.labelSize - val) < 0.01;
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setDisplayOpts((s) => ({ ...s, labelSize: val }))}
+                            className={
+                              'flex-1 h-7 rounded border text-[11px] transition-colors ' +
+                              (active
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-background border-input text-muted-foreground hover:bg-muted')
+                            }
+                            title={`Label size ${label}`}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-1 text-foreground">
+                      {displayOpts.detailMode === 'auto' ? 'Pin size' : 'Symbol size'}
+                    </div>
+                    <div className="flex gap-1">
+                      {(['S', 'M', 'L'] as const).map((label) => {
+                        const active = displayOpts.sizeChoice === label;
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setDisplayOpts((s) => ({ ...s, sizeChoice: label }))}
+                            className={
+                              'flex-1 h-7 rounded border text-[11px] transition-colors ' +
+                              (active
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-background border-input text-muted-foreground hover:bg-muted')
+                            }
+                            title={
+                              displayOpts.detailMode === 'auto'
+                                ? `Pin size ${label}`
+                                : `Symbol size ${label} — scales furniture in Always full mode`
+                            }>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-1 text-foreground">Detail mode</div>
+                    <div className="flex gap-1">
+                      {([
+                        ['Auto',        'auto'],
+                        ['Always full', 'always'],
+                      ] as const).map(([label, val]) => {
+                        const active = displayOpts.detailMode === val;
+                        return (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setDisplayOpts((s) => ({ ...s, detailMode: val }))}
+                            className={
+                              'flex-1 h-7 rounded border text-[11px] transition-colors ' +
+                              (active
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-background border-input text-muted-foreground hover:bg-muted')
+                            }
+                            title={val === 'auto'
+                              ? 'Compact markers when zoomed out or in dense pockets. Hover / click any marker to see full detail.'
+                              : 'Every detection renders at full detail. May clutter dense plans.'}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="text-muted-foreground text-[10px] leading-tight">
+                      IDs show on hover or when selected. Auto mode simplifies dense areas — the underlying data never changes.
+                    </div>
+                  </div>
                   {selected && (
                     <div className="mt-3 pt-2 border-t text-[11px] space-y-1">
                       <div className="font-semibold text-muted-foreground uppercase tracking-wide">Selected</div>
-                      <div className="text-foreground">{selected.label || selected.id}</div>
-                      <div className="text-muted-foreground">
+                      {/* Chairs: editable Display name + read-only internal
+                          ID (with copy button). Follows the Robin / Envoy /
+                          Eptura pattern — humans see a friendly name they
+                          can rename freely; the internal id stays stable
+                          for bookings.desk_id, DESK_UNKNOWN checks, and
+                          DESK_ID_CONFLICT save-time validation. */}
+                      {selected.type === 'chair' ? (
+                        <>
+                          <div>
+                            <label className="uppercase tracking-wide text-[9px] text-muted-foreground block mb-0.5">
+                              Display name
+                            </label>
+                            <input
+                              type="text"
+                              value={selected.label ?? ''}
+                              onChange={(e) => {
+                                const nextLabel = e.target.value;
+                                commit({
+                                  ...layout,
+                                  objects: layout.objects.map((o) =>
+                                    o.id === selected.id ? { ...o, label: nextLabel } : o
+                                  ),
+                                });
+                              }}
+                              placeholder={selected.id}
+                              className="w-full h-7 px-1.5 rounded border border-input bg-background text-foreground text-[11px] focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                          </div>
+                          <div className="pt-1">
+                            <label className="uppercase tracking-wide text-[9px] text-muted-foreground block mb-0.5">
+                              Chair ID (internal, permanent)
+                            </label>
+                            <div className="flex items-stretch gap-1">
+                              <div className="flex-1 h-7 px-1.5 rounded border border-input bg-muted/40 flex items-center font-mono text-foreground/80 text-[10.5px] select-all overflow-hidden whitespace-nowrap">
+                                {selected.id}
+                              </div>
+                              <button
+                                type="button"
+                                title="Copy chair ID to clipboard"
+                                onClick={() => {
+                                  try {
+                                    navigator.clipboard?.writeText(selected.id);
+                                  } catch { /* clipboard blocked — no-op */ }
+                                }}
+                                className="h-7 px-1.5 rounded border border-input bg-background text-muted-foreground hover:bg-muted"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                            </div>
+                            <div className="text-[9.5px] text-muted-foreground mt-0.5 leading-tight">
+                              Referenced by every booking of this chair. Not user-editable — renaming would orphan booking history.
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-foreground">{selected.label || selected.id}</div>
+                      )}
+                      <div className="text-muted-foreground pt-1">
                         {(selected.w || 0).toFixed(0)} × {(selected.h || 0).toFixed(0)} px
                         <br />
                         {((selected.w || 0) / layout.pxPerMeter).toFixed(1)} × {((selected.h || 0) / layout.pxPerMeter).toFixed(1)} m
@@ -1074,7 +1650,12 @@ export default function DeskLayoutEditor({
                   for "stretch the image if needed" rather than letterbox
                   bars or cropped corners. */}
               {layout.mode === 'image' && layout.imageUrl && (
-                <image href={layout.imageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />
+                // preserveAspectRatio="xMidYMid meet": the floor-plan image is
+                // scaled uniformly and centred inside the canvas, so its own
+                // aspect ratio is preserved (no stretching). Detection coords
+                // are computed with the same uniform scale + letterbox offset
+                // in runScan(), so overlays land on top of the real furniture.
+                <image href={layout.imageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid meet" />
               )}
               {layout.mode === 'blank' && (
                 <>
@@ -1087,35 +1668,108 @@ export default function DeskLayoutEditor({
                 </>
               )}
 
-              {/* objects - walls first so chairs/tables stack above them */}
+              {/* objects - walls first so chairs/tables stack above them.
+                  Layer visibility toggles filter DETECTION-ADDED items
+                  (`_fromScan`) only — manually placed furniture always
+                  renders regardless of the display toggles, because
+                  hiding what the admin explicitly placed would surprise. */}
               {layout.objects
+                .filter((o) => {
+                  if (!o._fromScan) return true;
+                  if (o.type === 'chair'       && !displayOpts.chairsVisible) return false;
+                  if (o.type === 'table_round' && !displayOpts.roundVisible)  return false;
+                  if (o.type === 'table_rect'  && !displayOpts.rectVisible)   return false;
+                  return true;
+                })
                 .slice()
                 .sort((a, b) => zOrder(a) - zOrder(b))
-                .map((o) => (
-                  <ObjectTile
-                    key={o.id}
-                    o={o}
-                    selected={o.id === selectedId}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      setSelectedId(o.id);
-                      const p = svgPoint(e.clientX, e.clientY);
-                      if (!p) return;
-                      setDrag({ kind: 'move', id: o.id, dx: p.x - o.x, dy: p.y - o.y });
-                    }}
-                    onHandleDown={(handle, e) => {
-                      e.stopPropagation();
-                      setSelectedId(o.id);
-                      setDrag({
-                        kind: 'resize',
-                        id: o.id,
-                        handle,
-                        ox: o.x, oy: o.y,
-                        ow: o.w || 60, oh: o.h || 60,
-                      });
-                    }}
-                  />
-              ))}
+                .map((o) => {
+                  const isSelected = o.id === selectedId;
+                  const isHovered  = o.id === hoveredId;
+                  // LOD only applies to detection objects (_fromScan).
+                  // LOD applies to every chair / round table / rect table
+                  // regardless of whether it was AI-detected or manually
+                  // placed, so the Pin size + Symbol size + Detail mode
+                  // controls behave consistently across both. Walls / doors
+                  // / plants ignore lod inside renderShape, so passing a
+                  // computed tier here is harmless for them.
+                  const wPx = o.w ?? 0;
+                  const screenPx = wPx * pxPerSvgUnit;
+                  const lod: LodTier = lodForObject(
+                    o.type, screenPx, neighbourCountFor(o),
+                    isSelected, isHovered, displayOpts.detailMode,
+                  );
+                  // Label priority: at most ONE label visible at any
+                  // time to prevent overlap. Hovered object always
+                  // shows its label; the selected object shows its
+                  // label only when nothing else is being hovered.
+                  const showLabel = isHovered || (isSelected && hoveredId === null);
+                  // "Pin mode": render this chair / table as a small
+                  // colored map-pin marker INSTEAD of a full furniture
+                  // shape. Applies to ANY chair / table (AI-detected or
+                  // manually placed) whenever Auto detail mode is on and
+                  // the item is not currently being hovered / selected.
+                  // Hover / select promote back to the full furniture
+                  // visual so the user can see the object's true extent.
+                  const showAsPin = displayOpts.detailMode === 'auto'
+                    && !isSelected
+                    && !isHovered;
+                  // Fill in a table label for legacy layouts that never
+                  // had one saved. Chairs already carry their own label.
+                  const oResolved = !o.label && (o.type === 'table_round' || o.type === 'table_rect')
+                    ? { ...o, label: tableLabelFallback.get(o.id) }
+                    : o;
+                  return (
+                    <ObjectTile
+                      key={o.id}
+                      o={oResolved}
+                      selected={isSelected}
+                      hovered={isHovered}
+                      labelSize={displayOpts.labelSize}
+                      lod={lod}
+                      showLabel={showLabel}
+                      showAsPin={showAsPin}
+                      pinSize={{ S: 1.0, M: 1.5, L: 2.0 }[displayOpts.sizeChoice]}
+                      symbolSize={{ S: 0.75, M: 1.0, L: 1.25 }[displayOpts.sizeChoice]}
+                      // Freeze hover state while a drag is active. Otherwise
+                      // moving the cursor across other objects during a drag
+                      // would make them light up / expand from pin to full
+                      // symbol, and the user perceives it as "picking up the
+                      // wrong object." No hover changes = no visual noise.
+                      // Read dragRef.current (synchronously updated below on
+                      // mousedown / mouseup) so hover state is frozen the
+                      // instant the drag starts — no stale-closure race.
+                      onMouseEnter={() => { if (!dragRef.current) setHoveredId(o.id); }}
+                      onMouseLeave={() => { if (!dragRef.current) setHoveredId((cur) => (cur === o.id ? null : cur)); }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        // Remember whether the object was already selected
+                        // BEFORE this mousedown — so a plain click on an
+                        // already-selected object toggles it OFF at mouseup.
+                        const wasSelected = selectedId === o.id;
+                        setSelectedId(o.id);
+                        const p = svgPoint(e.clientX, e.clientY);
+                        if (!p) return;
+                        const d: DragMode = { kind: 'move', id: o.id, dx: p.x - o.x, dy: p.y - o.y, wasSelected };
+                        dragRef.current = d;   // sync ref FIRST
+                        setDrag(d);            // then React state
+                      }}
+                      onHandleDown={(handle, e) => {
+                        e.stopPropagation();
+                        setSelectedId(o.id);
+                        const d: DragMode = {
+                          kind: 'resize',
+                          id: o.id,
+                          handle,
+                          ox: o.x, oy: o.y,
+                          ow: o.w || 60, oh: o.h || 60,
+                        };
+                        dragRef.current = d;
+                        setDrag(d);
+                      }}
+                    />
+                  );
+                })}
 
               {/* scale ruler (bottom-left, sits above bottom wall) */}
               <g>
@@ -1148,11 +1802,24 @@ function zOrder(o: LayoutObject): number {
   return 5;
 }
 
-function ObjectTile({ o, selected, onMouseDown, onHandleDown }: {
+function ObjectTile({
+  o, selected, hovered = false, labelSize = 1,
+  lod = 'detail', showLabel = false, showAsPin = false, pinSize = 1, symbolSize = 1,
+  onMouseDown, onHandleDown, onMouseEnter, onMouseLeave,
+}: {
   o: LayoutObject;
   selected: boolean;
+  hovered?: boolean;
+  labelSize?: number;
+  lod?: LodTier;
+  showLabel?: boolean;
+  showAsPin?: boolean;
+  pinSize?: number;
+  symbolSize?: number;
   onMouseDown: (e: React.MouseEvent) => void;
   onHandleDown: (h: ResizeHandle, e: React.MouseEvent) => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   const p = PRESETS[o.type];
   const w  = o.w ?? p.w;
@@ -1166,8 +1833,19 @@ function ObjectTile({ o, selected, onMouseDown, onHandleDown }: {
       transform={`rotate(${rot} ${cx} ${cy})`}
       style={{ cursor: 'grab' }}
       onMouseDown={onMouseDown}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
-      {renderShape(o, w, h, selected)}
+      {/* Invisible full-bbox hit region. First child = lowest SVG
+          z-order, so the visible marker on top still intercepts
+          events over its area; but for Dot / Icon tiers where the
+          visible marker covers only a fraction of the bbox, hover /
+          click / drag fall through to this rect and interaction
+          feels the same as if the full shape were painted. */}
+      <rect x={o.x} y={o.y} width={w} height={h}
+        fill="transparent" pointerEvents="all" />
+
+      {renderShape(o, w, h, selected, hovered, labelSize, lod, showLabel, showAsPin, pinSize, symbolSize)}
 
       {/* Resize handles - shown on any selected object. Chairs are now
           resizable too (previously locked) so admin can size individual
@@ -1177,37 +1855,219 @@ function ObjectTile({ o, selected, onMouseDown, onHandleDown }: {
   );
 }
 
-function renderShape(o: LayoutObject, w: number, h: number, selected: boolean) {
+function renderShape(o: LayoutObject, w: number, h: number, selected: boolean, hovered: boolean = false, labelSize: number = 1, lod: LodTier = 'detail', showLabel: boolean = false, showAsPin: boolean = false, pinSize: number = 1, symbolSize: number = 1) {
   const p = PRESETS[o.type];
-  const stroke = selected ? '#2563eb' : p.stroke;
-  const sw     = selected ? 2.5 : 1.5;
+  // Hover gives a subtle blue tint / thicker stroke so the user knows
+  // which object their cursor is on, distinct from selection.
+  const stroke = selected ? '#2563eb' : hovered ? '#60a5fa' : p.stroke;
+  const sw     = selected ? 2.5 : hovered ? 2.0 : 1.5;
 
   switch (o.type) {
     case 'chair': {
       // Seat + tall backrest on one side - reads as a chair from afar.
       // VIP chairs swap to a purple palette with a centred gold star so
       // admin can spot reserved seats at a glance (these are hidden from
-      // the booker entirely).
+      // the booker entirely). VIPs skip LOD tiers entirely — the star is
+      // an identity signal and should always be recognisable.
       const seat        = o.isVip ? '#e9d5ff'              : 'url(#seat-grad)';
       const chairStroke = o.isVip ? '#7e22ce'              : stroke;
       const backFill    = o.isVip ? '#7e22ce'              : p.stroke;
       const labelFill   = o.isVip ? '#4c1d95'              : '#7c2d12';
+      const cxo = o.x + w / 2;
+      const cyo = o.y + h / 2;
+
+      // ----- Pin mode (baseline for AI detections): small BLUE map-pin +
+      //       thin dashed detection-area outline. Never covers the
+      //       underlying floor-plan chair drawing. Only fires when the
+      //       item is a scan detection AND is not being hovered/selected
+      //       (hover/select promote back to the full furniture visual
+       //       further below so the user still sees exactly what/where
+      //       the detection is when they interact with it).
+      if (!o.isVip && showAsPin) {
+        // Pin dimensions scale with the user's Pin size preference (S/M/L
+        // in the sidebar). Detection-area outline stays fixed — only the
+        // visible marker resizes so the AI's real bounding box remains
+        // an accurate reference.
+        if (lod === 'dot') {
+          return (
+            <circle cx={cxo} cy={cyo} r={3 * pinSize}
+              fill={PIN_COLOR_CHAIR} opacity={0.9}
+              pointerEvents="none" />
+          );
+        }
+        return (
+          <>
+            {/* soft halo behind the pin (scales) */}
+            <circle cx={cxo} cy={cyo} r={4 * pinSize}
+              fill={PIN_COLOR_CHAIR} opacity={0.18}
+              pointerEvents="none" />
+            {/* pin: solid colored dot (scales) */}
+            <circle cx={cxo} cy={cyo} r={2.5 * pinSize}
+              fill={PIN_COLOR_CHAIR} opacity={0.95}
+              pointerEvents="none" />
+          </>
+        );
+      }
+
+      // ----- Dot tier: a small filled circle at the centroid. -----
+      // Reachable only when NOT in pin mode (e.g. Always-full mode).
+      if (!o.isVip && lod === 'dot') {
+        return (
+          <circle cx={cxo} cy={cyo} r={3}
+            fill={p.stroke} opacity={0.9}
+            style={{ transition: 'r 120ms ease-out, opacity 120ms ease-out' }}
+            pointerEvents="none" />
+        );
+      }
+
+      // ----- Icon tier: same modern chair symbol as Detail (filled backrest
+      //       with headrest peak + filled seat cushion), just at 68% scale.
+      //       No armrests at this tier — keeps small chairs uncluttered. -----
+      if (!o.isVip && lod === 'icon') {
+        const iconStroke = selected ? '#2563eb' : PIN_COLOR_CHAIR;
+        const iconStrokeOpacity = selected ? 1 : hovered ? 1 : 0.70;
+        const iconStrokeWidth = selected ? 2.5 : hovered ? 1.5 : 0.8;
+        const iconBackStroke = iconStrokeWidth * 0.85;
+        // Uniform scale of the normalized 100×100 chair symbol into the bbox.
+        // symbolSize (S/M/L in Display panel) is a purely visual multiplier —
+        // it doesn't affect the bbox / interaction area / saved coordinates.
+        const S = Math.min(w, h) / 100 * 0.68 * symbolSize;
+        const originX = o.x + w / 2 - 50 * S;
+        const originY = o.y + h / 2 - 50 * S;
+        const backrestPath =
+          'M 18 38 L 82 38 L 82 22 Q 82 12 70 12 Q 50 2 30 12 Q 18 12 18 22 Z';
+        return (
+          <g transform={`translate(${originX} ${originY}) scale(${S})`} pointerEvents="none">
+            {/* seat cushion — solid light blue (blue-200) */}
+            <rect x={14} y={36} width={72} height={54} rx={8} ry={8}
+              fill="#bfdbfe" fillOpacity={0.90}
+              stroke={iconStroke} strokeOpacity={iconStrokeOpacity} strokeWidth={iconStrokeWidth}
+              vectorEffect="non-scaling-stroke"
+              style={{ transition: 'stroke-width 120ms ease-out' }} />
+            {/* backrest — vivid blue (blue-500) padded band with headrest peak */}
+            <path d={backrestPath}
+              fill="#3b82f6" fillOpacity={0.92}
+              stroke={iconStroke} strokeOpacity={iconStrokeOpacity} strokeWidth={iconBackStroke}
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ transition: 'stroke-width 120ms ease-out' }} />
+          </g>
+        );
+      }
+
+      // ----- Detail tier: unified silhouette + inner surface tint +
+      //       backrest, with VIP keeping its existing purple/gold-star look.
+      //
+      //       Non-VIP uses a refined top-down chair symbol:
+      //         - silhouette:    cream fill @ 45% + warm-stone stroke @ 80%
+      //         - inner surface: warm-stone tint @ 10% (subtle depth cue)
+      //         - backrest:      warm-stone @ 65% at TOP edge (rotates with
+      //                          the object via the parent <g rotate>, so
+      //                          it always shows the true "back" direction)
+      //         - hover:         stroke → blue @ 100%
+      //         - selected:      stroke → blue @ 100%, thicker
       const back = 4;
-      // Centre the gold star inside the seat. Size scales with chair so
-      // it stays readable on small/large chairs.
       const starCx = o.x + w / 2;
       const starCy = o.y + back + (h - back) / 2 - 2;
       const starSize = Math.max(11, Math.min(22, Math.min(w, h) - 16));
+      const scaledFont = Math.max(6, 10 * labelSize);
+
+      // Non-VIP Detail tier: architectural chair symbol — an open arched
+      // backrest shell that wraps back+sides and opens toward the front,
+      // with a small inner seat cushion. Symbol is defined in a normalized
+      // 100×100 space and uniformly scaled into the bbox so proportions
+      // are preserved regardless of bbox aspect ratio. The AI bbox stays
+      // as the interaction area only — never drawn.
+      if (!o.isVip) {
+        const strokeColor = selected ? '#2563eb' : PIN_COLOR_CHAIR;
+        const strokeOpacity = selected ? 1 : hovered ? 1 : 0.70;
+        const strokeWidth = selected ? 2.5 : hovered ? 1.5 : 0.8;
+        const backStrokeWidth = strokeWidth * 0.85;
+
+        // Modern top-down office chair symbol: filled padded backrest with a
+        // subtle headrest peak + filled seat cushion. Two solid shapes read
+        // as an actual chair from above (padded back + cushion), not a
+        // stroke-only outline. Normalized 100×100 space, uniformly scaled.
+        // symbolSize (S/M/L in Display panel) is a purely visual multiplier —
+        // it doesn't affect the bbox / interaction area / saved coordinates.
+        const S = Math.min(w, h) / 100 * 0.80 * symbolSize;
+        const originX = o.x + w / 2 - 50 * S;
+        const originY = o.y + h / 2 - 50 * S;
+
+        // Backrest: rounded band across the top with a slight upward peak
+        // at the centre (subtle headrest cue). Bottom edge overlaps the top
+        // of the seat by ~2 units for a clean visual join.
+        const backrestPath =
+          'M 18 38 L 82 38 L 82 22 Q 82 12 70 12 Q 50 2 30 12 Q 18 12 18 22 Z';
+
+        // Armrests appear only when the visible chair is large enough to
+        // render them clearly (avoids clutter on small chairs).
+        const showArms = Math.min(w, h) * symbolSize >= 44;
+
+        return (
+          <>
+            <g transform={`translate(${originX} ${originY}) scale(${S})`} pointerEvents="none">
+              {/* seat cushion — solid light blue (blue-200), the main body */}
+              <rect x={14} y={36} width={72} height={54} rx={8} ry={8}
+                fill="#bfdbfe" fillOpacity={0.90}
+                stroke={strokeColor} strokeOpacity={strokeOpacity} strokeWidth={strokeWidth}
+                vectorEffect="non-scaling-stroke"
+                style={{ transition: 'stroke-width 120ms ease-out' }} />
+              {/* armrests — vivid blue (matching backrest), only for large enough chairs */}
+              {showArms && (
+                <>
+                  <rect x={8} y={50} width={8} height={28} rx={3.5} ry={3.5}
+                    fill="#3b82f6" fillOpacity={0.85}
+                    stroke={strokeColor} strokeOpacity={strokeOpacity * 0.9} strokeWidth={backStrokeWidth}
+                    vectorEffect="non-scaling-stroke" />
+                  <rect x={84} y={50} width={8} height={28} rx={3.5} ry={3.5}
+                    fill="#3b82f6" fillOpacity={0.85}
+                    stroke={strokeColor} strokeOpacity={strokeOpacity * 0.9} strokeWidth={backStrokeWidth}
+                    vectorEffect="non-scaling-stroke" />
+                </>
+              )}
+              {/* backrest — vivid blue (blue-500) padded band with headrest peak */}
+              <path d={backrestPath}
+                fill="#3b82f6" fillOpacity={0.92}
+                stroke={strokeColor} strokeOpacity={strokeOpacity} strokeWidth={backStrokeWidth}
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+                style={{ transition: 'stroke-width 120ms ease-out' }} />
+            </g>
+
+            {/* Chair id label — kept in bbox space (not scaled with symbol) */}
+            <text x={o.x + w / 2} y={o.y + h / 2 + 4}
+              textAnchor="middle"
+              fontSize={scaledFont}
+              fontWeight={600}
+              fill="#57534e"
+              opacity={showLabel ? 1 : 0}
+              style={{ transition: 'opacity 120ms ease-out' }}
+              pointerEvents="none">
+              {o.label || o.id}
+            </text>
+          </>
+        );
+      }
+
+      // VIP-only path below — unchanged purple palette + gold-star centre.
+      const seatFillOpacity = 1;
+      const backrestOpacity = 0.9;
       return (
         <>
           {/* backrest */}
           <rect x={o.x} y={o.y} width={w} height={back}
-            rx={2} ry={2} fill={backFill} opacity={0.8} />
-          {/* seat */}
+            rx={2} ry={2} fill={backFill} opacity={backrestOpacity}
+            style={{ transition: 'opacity 120ms ease-out' }}
+            pointerEvents="none" />
+          {/* seat — semi-transparent fill so the floor-plan chair shows through */}
           <rect x={o.x + 1} y={o.y + back} width={w - 2} height={h - back - 1}
-            rx={6} ry={6} fill={seat} stroke={chairStroke} strokeWidth={o.isVip ? 2 : sw} />
-          {/* For VIP: gold star centre. For regular: chair id label centre. */}
-          {o.isVip ? (
+            rx={6} ry={6} fill={seat} fillOpacity={seatFillOpacity}
+            stroke={chairStroke} strokeWidth={o.isVip ? 2 : sw}
+            style={{ transition: 'stroke-width 120ms ease-out' }}
+            pointerEvents="none" />
+          {/* For VIP: gold star centre (always visible — identity signal). */}
+          {o.isVip && (
             <text
               x={starCx} y={starCy + starSize / 3}
               textAnchor="middle"
@@ -1217,12 +2077,19 @@ function renderShape(o: LayoutObject, w: number, h: number, selected: boolean) {
               strokeWidth={0.6}
               fontWeight={800}
               pointerEvents="none">★</text>
-          ) : (
+          )}
+          {/* Regular chair id label: single-label rule (see the render
+              call site). Always mounted so the CSS opacity transition
+              can smoothly fade in/out — pointerEvents:none so the
+              label never blocks hover on adjacent chairs. */}
+          {!o.isVip && (
             <text x={o.x + w / 2} y={o.y + h / 2 + 4}
               textAnchor="middle"
-              fontSize={10}
+              fontSize={scaledFont}
               fontWeight={600}
               fill={labelFill}
+              opacity={showLabel ? 1 : 0}
+              style={{ transition: 'opacity 120ms ease-out' }}
               pointerEvents="none">
               {o.label || o.id}
             </text>
@@ -1231,25 +2098,182 @@ function renderShape(o: LayoutObject, w: number, h: number, selected: boolean) {
       );
     }
     case 'table_round': {
+      // Semi-transparent fill so a floor-plan / photo background stays visible
+      // under the table for admin review. Outline stays crisp so the shape
+      // reads clearly at a glance.
       const r = Math.min(w, h) / 2;
       const cx = o.x + w / 2;
       const cy = o.y + h / 2;
+      // ----- Pin mode (baseline for detections): small green ring + dashed
+      //       circular detection outline. Ring-shape pin visually reinforces
+      //       "round table" without a text label. -----
+      if (showAsPin) {
+        if (lod === 'dot') {
+          return (
+            <circle cx={cx} cy={cy} r={3 * pinSize}
+              fill={PIN_COLOR_TABLE_ROUND} opacity={0.9}
+              pointerEvents="none" />
+          );
+        }
+        return (
+          <>
+            {/* pin ring (scales with pinSize) */}
+            <circle cx={cx} cy={cy} r={5 * pinSize}
+              fill="none"
+              stroke={PIN_COLOR_TABLE_ROUND} strokeWidth={1.6} opacity={0.95}
+              pointerEvents="none" />
+            <circle cx={cx} cy={cy} r={1.5 * pinSize}
+              fill={PIN_COLOR_TABLE_ROUND} opacity={0.9}
+              pointerEvents="none" />
+          </>
+        );
+      }
+      // Dot tier: too small on screen — collapse to a category-coloured dot.
+      if (lod === 'dot') {
+        return (
+          <circle cx={cx} cy={cy} r={3}
+            fill={p.stroke} opacity={0.9}
+            style={{ transition: 'r 120ms ease-out, opacity 120ms ease-out' }}
+            pointerEvents="none" />
+        );
+      }
+      // Minimal round table: clean tabletop circle sized to sit INSIDE the
+      // AI bbox (the AI bbox usually includes padding around the real table).
+      // Base scale 0.82 gives 18% breathing room; symbolSize adjusts within
+      // a hard cap of 0.95 so even at "L" the shape never overflows the bbox.
+      // Modern flat round table: solid warm champagne tabletop with a green
+      // outline (category color) and a thin darker inner ring suggesting the
+      // tabletop edge — reads as a real wooden round table from above.
+      const roundStroke = selected ? '#2563eb' : PIN_COLOR_TABLE_ROUND;
+      const roundStrokeOpacity = selected ? 1 : hovered ? 1 : 0.85;
+      const roundStrokeWidth = selected ? 2.5 : hovered ? 1.8 : 1.2;
+      const rInset = r * Math.min(0.95, 0.82 * symbolSize);
+      const roundFont = Math.max(6, 10 * labelSize);
       return (
         <>
-          <ellipse cx={cx + 2} cy={cy + 3} rx={r} ry={r * 0.95} fill="#0f172a" opacity={0.08} />
-          <circle cx={cx} cy={cy} r={r} fill="url(#wood-grain)" stroke={stroke} strokeWidth={sw} />
-          <circle cx={cx} cy={cy} r={Math.max(2, r - 6)} fill="none" stroke={p.stroke} strokeOpacity={0.25} strokeWidth={1} />
+          {/* tabletop — solid warm champagne fill (amber-100) */}
+          <circle
+            cx={cx} cy={cy} r={rInset}
+            fill="#fef3c7" fillOpacity={0.92}
+            stroke={roundStroke} strokeOpacity={roundStrokeOpacity} strokeWidth={roundStrokeWidth}
+            style={{ transition: 'stroke-width 120ms ease-out' }}
+            pointerEvents="none"
+          />
+          {/* subtle inner ring — dark amber @ 25% suggests the tabletop edge */}
+          <circle
+            cx={cx} cy={cy} r={rInset * 0.86}
+            fill="none"
+            stroke="#92400e" strokeOpacity={0.25} strokeWidth={0.6}
+            pointerEvents="none"
+          />
+          {/* Table id label — mirrors the chair hover/select fade rule. */}
+          <text x={cx} y={cy + 4}
+            textAnchor="middle"
+            fontSize={roundFont}
+            fontWeight={600}
+            fill="#57534e"
+            opacity={showLabel ? 1 : 0}
+            style={{ transition: 'opacity 120ms ease-out' }}
+            pointerEvents="none">
+            {o.label || ''}
+          </text>
         </>
       );
     }
     case 'table_rect': {
+      // Semi-transparent fill so a floor-plan / photo background stays visible
+      // under the table for admin review. Outline stays crisp so the shape
+      // reads clearly at a glance.
+      // ----- Pin mode (baseline for detections): small orange pill + dashed
+      //       rectangular detection outline. Elongated pill visually cues
+      //       "rectangular table" without a text label. -----
+      if (showAsPin) {
+        const rcx = o.x + w / 2;
+        const rcy = o.y + h / 2;
+        // Pill dimensions scale with pinSize (S/M/L in sidebar).
+        const pillW = 10 * pinSize;
+        const pillH = 4  * pinSize;
+        const dotSide = 6 * pinSize;
+        if (lod === 'dot') {
+          return (
+            <rect x={rcx - dotSide / 2} y={rcy - dotSide / 2}
+              width={dotSide} height={dotSide}
+              fill={PIN_COLOR_TABLE_RECT} opacity={0.9}
+              pointerEvents="none" />
+          );
+        }
+        return (
+          <>
+            {/* pin pill (scales with pinSize) */}
+            <rect x={rcx - pillW / 2} y={rcy - pillH / 2}
+              width={pillW} height={pillH}
+              rx={2} ry={2}
+              fill={PIN_COLOR_TABLE_RECT} opacity={0.95}
+              pointerEvents="none" />
+          </>
+        );
+      }
+      // Dot tier: too small on screen — collapse to a small category square.
+      if (lod === 'dot') {
+        return (
+          <rect x={o.x + w / 2 - 3} y={o.y + h / 2 - 3}
+            width={6} height={6}
+            fill={p.stroke} opacity={0.9}
+            style={{ transition: 'opacity 120ms ease-out' }}
+            pointerEvents="none" />
+        );
+      }
+      // Minimal rect table: clean tabletop rectangle sized to sit INSIDE
+      // the AI bbox (the AI bbox usually includes padding around the real
+      // table). Base scale 0.78 gives 22% breathing room; symbolSize
+      // adjusts within a hard cap of 0.95 so even at "L" the shape never
+      // overflows the bbox.
+      // Modern flat rect table: solid warm terracotta tabletop with an
+      // orange outline (category color) and a subtle darker top-edge band
+      // for a hint of 2.5D depth — reads as a real wooden conference table.
+      const rectStroke = selected ? '#2563eb' : PIN_COLOR_TABLE_RECT;
+      const rectStrokeOpacity = selected ? 1 : hovered ? 1 : 0.85;
+      const rectStrokeWidth = selected ? 2.5 : hovered ? 1.8 : 1.2;
+      const rectScale = Math.min(0.95, 0.78 * symbolSize);
+      const visW = w * rectScale;
+      const visH = h * rectScale;
+      const visX = o.x + (w - visW) / 2;
+      const visY = o.y + (h - visH) / 2;
+      const insetR = Math.min(visW, visH) * 0.06;
+      const rectFont = Math.max(6, 10 * labelSize);
       return (
         <>
-          <rect x={o.x + 2} y={o.y + 3} width={w} height={h} rx={8} ry={8} fill="#0f172a" opacity={0.08} />
-          <rect x={o.x} y={o.y} width={w} height={h}
-            rx={8} ry={8} fill="url(#wood-grain)" stroke={stroke} strokeWidth={sw} />
-          <line x1={o.x + w / 2} y1={o.y + 6} x2={o.x + w / 2} y2={o.y + h - 6}
-            stroke={p.stroke} strokeOpacity={0.18} strokeWidth={1} />
+          {/* tabletop — solid warm terracotta fill (orange-200) */}
+          <rect
+            x={visX} y={visY}
+            width={visW} height={visH}
+            rx={insetR} ry={insetR}
+            fill="#fed7aa" fillOpacity={0.92}
+            stroke={rectStroke} strokeOpacity={rectStrokeOpacity} strokeWidth={rectStrokeWidth}
+            style={{ transition: 'stroke-width 120ms ease-out' }}
+            pointerEvents="none"
+          />
+          {/* subtle darker top-edge band (~10% of height) — depth cue */}
+          {visH > 20 && (
+            <rect
+              x={visX + 1} y={visY + 1}
+              width={visW - 2} height={Math.max(3, visH * 0.10)}
+              rx={insetR * 0.6} ry={insetR * 0.6}
+              fill="#9a3412" fillOpacity={0.18}
+              pointerEvents="none"
+            />
+          )}
+          {/* Table id label — mirrors the chair hover/select fade rule. */}
+          <text x={o.x + w / 2} y={o.y + h / 2 + 4}
+            textAnchor="middle"
+            fontSize={rectFont}
+            fontWeight={600}
+            fill="#57534e"
+            opacity={showLabel ? 1 : 0}
+            style={{ transition: 'opacity 120ms ease-out' }}
+            pointerEvents="none">
+            {o.label || ''}
+          </text>
         </>
       );
     }
@@ -1322,9 +2346,11 @@ function renderHandles(x: number, y: number, w: number, h: number, onDown: (h: R
   ];
   return (
     <g opacity={0.6}>
-      <rect x={x - 3} y={y - 3} width={w + 6} height={h + 6}
-        fill="none" stroke="#2563eb" strokeOpacity={0.5}
-        strokeDasharray="4 3" strokeWidth={1} pointerEvents="none" />
+      {/* Dashed selection bbox removed — the shape's own blue selection
+          stroke (chair backrest / table outline) already indicates the
+          selected object, and the dashed rect was drawn at the AI bbox
+          which is often much larger than the visible chair, creating a
+          "large box around a small object" look. */}
       {handles.map((h) => (
         <g key={h.k}>
           {/* Visible (small + translucent) handle dot. */}

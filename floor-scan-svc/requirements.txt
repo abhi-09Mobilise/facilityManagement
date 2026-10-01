@@ -14,3 +14,26 @@ opencv-python-headless>=4.10
 numpy>=1.26
 python-multipart>=0.0.9
 pydantic>=2.9
+
+# YOLOv11 pretrained detector — powers the /scan-yolo endpoint.
+# Pulls torch + torchvision as transitive deps (~500 MB one-time).
+ultralytics>=8.3
+
+# AI vision providers — the /scan-ai endpoint routes to one of these based
+# on the AI_PROVIDER env var. All three SDKs are installed so operators can
+# flip providers at any time by editing .env + restarting the service.
+#
+# Gemini (Google). Reads GEMINI_API_KEY from .env via python-dotenv. SSL
+# trust for MITM / corporate-CA scenarios is handled in-code by
+# snapshotting the Windows certificate store into an in-memory PEM bundle
+# (see _load_windows_ca_pem in app.py) — no truststore dependency.
+google-genai>=1.0
+# Claude (Anthropic). Reads CLAUDE_API_KEY from .env.
+anthropic>=0.40
+# OpenAI (ChatGPT). Reads OPENAI_API_KEY from .env.
+openai>=1.50
+
+python-dotenv>=1.0
+# Pillow is already pulled in transitively by ultralytics, but /scan-ai
+# imports it directly so we pin the intent here too.
+Pillow>=10.0
