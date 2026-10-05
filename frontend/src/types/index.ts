@@ -339,6 +339,7 @@ export interface CreateUserPayload {
   site_id?: number | null;
   role?: Role;
   tenant_id?: number;
+  organisation_id?: number;
   status?: 0 | 1;
   is_approved?: 0 | 1;
   is_approver?: 0 | 1;

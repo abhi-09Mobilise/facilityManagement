@@ -719,29 +719,29 @@ export default function DeskLayoutEditor({
   useEffect(() => {
     if (!drag) return;
     let dirty = false;
-    function applyMove(p: { x: number; y: number }) {
+    function applyMove(p: { x: number; y: number }, d: Extract<DragMode, { kind: 'move' }>) {
       // Read layout from ref (updated synchronously by commitLocal) — this
       // lets the effect subscribe listeners just once per drag session
       // instead of re-subscribing on every commit.
       const cur = layoutRef.current;
-      const obj = cur.objects.find((o) => o.id === drag!.id);
+      const obj = cur.objects.find((o) => o.id === d.id);
       if (!obj) return;
       const ow = obj.w || 60;
       const oh = obj.h || 60;
       let nx: number, ny: number;
       if (obj.perimeter && (obj.side === 'top' || obj.side === 'bottom')) {
-        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - drag!.dx)));
+        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - d.dx)));
         ny = obj.y;
       } else if (obj.perimeter && (obj.side === 'left' || obj.side === 'right')) {
         nx = obj.x;
-        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - drag!.dy)));
+        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - d.dy)));
       } else {
-        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - drag!.dx)));
-        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - drag!.dy)));
+        nx = Math.max(0, Math.min(W - ow, Math.round(p.x - d.dx)));
+        ny = Math.max(0, Math.min(H - oh, Math.round(p.y - d.dy)));
       }
       commitLocal({
         ...cur,
-        objects: cur.objects.map((o) => (o.id === drag!.id ? { ...o, x: nx, y: ny } : o)),
+        objects: cur.objects.map((o) => (o.id === d.id ? { ...o, x: nx, y: ny } : o)),
       });
     }
     function applyResize(p: { x: number; y: number }, d: Extract<DragMode, { kind: 'resize' }>) {
@@ -771,9 +771,9 @@ export default function DeskLayoutEditor({
     }
     function onMove(e: MouseEvent) {
       const p = svgPoint(e.clientX, e.clientY);
-      if (!p) return;
-      if (drag!.kind === 'move') applyMove(p);
-      else applyResize(p, drag!);
+      if (!p || !drag) return;
+      if (drag.kind === 'move') applyMove(p, drag);
+      else applyResize(p, drag);
       dirty = true;
     }
     function onUp() {

@@ -76,15 +76,15 @@ const MASTERS: NavItem[] = [
   // (tabs + cascade filter). Legacy /admin/<segment> URLs are still routed
   // for deep-link compatibility but the sidebar now points at the shell.
   { to: '/admin/masters/organisations', label: 'Organisations', icon: <Network className="h-4 w-4" />,        roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/masters/sites',         label: 'Sites',         icon: <Building className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/masters/buildings',     label: 'Buildings',     icon: <Warehouse className="h-4 w-4" />,      roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/masters/floors',        label: 'Floors',        icon: <Layers className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/masters/facilities',    label: 'Facilities',    icon: <Sparkles className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/masters/sites',         label: 'Sites',         icon: <Building className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin', 'org_admin'] },
+  { to: '/admin/masters/buildings',     label: 'Buildings',     icon: <Warehouse className="h-4 w-4" />,      roles: ['super_admin', 'tenant_admin', 'org_admin'] },
+  { to: '/admin/masters/floors',        label: 'Floors',        icon: <Layers className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin', 'org_admin'] },
+  { to: '/admin/masters/facilities',    label: 'Facilities',    icon: <Sparkles className="h-4 w-4" />,       roles: ['super_admin', 'tenant_admin', 'org_admin'] },
   { to: '/admin/floor-3d',              label: '3D Studio',     icon: <Boxes className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin', 'org_admin'] },
   // Departments / Users / Meal times / Pantries are NOT part of the tabbed
   // shell — they still open on their own pages.
-  { to: '/admin/departments',           label: 'Departments',   icon: <UsersRound className="h-4 w-4" />,     roles: ['super_admin', 'tenant_admin'] },
-  { to: '/admin/users',                 label: 'Employees',     icon: <Users className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin'] },
+  { to: '/admin/departments',           label: 'Departments',   icon: <UsersRound className="h-4 w-4" />,     roles: ['super_admin', 'tenant_admin', 'org_admin'] },
+  { to: '/admin/users',                 label: 'Employees',     icon: <Users className="h-4 w-4" />,          roles: ['super_admin', 'tenant_admin', 'org_admin'] },
   { to: '/admin/meal-times',            label: 'Meal times',    icon: <UtensilsCrossed className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin'] },
   { to: '/admin/pantries',              label: 'Pantries',      icon: <Coffee className="h-4 w-4" />,         roles: ['super_admin', 'tenant_admin'] }, // F06
   // Configurable RBAC — the prototype's Roles & access matrix, editable.
@@ -92,12 +92,12 @@ const MASTERS: NavItem[] = [
 ];
 
 const BOOKING: NavItem[] = [
-  { to: '/facility',     label: 'Book a facility', icon: <CalendarCheck className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin', 'approver', 'employee'] },
-  { to: '/my-bookings',  label: 'My bookings',     icon: <BookOpen className="h-4 w-4" />,      roles: ['super_admin', 'tenant_admin', 'approver', 'employee'] },
+  { to: '/facility',     label: 'Book a facility', icon: <CalendarCheck className="h-4 w-4" />, roles: ['super_admin', 'tenant_admin', 'approver', 'employee', 'org_admin'] },
+  { to: '/my-bookings',  label: 'My bookings',     icon: <BookOpen className="h-4 w-4" />,      roles: ['super_admin', 'tenant_admin', 'approver', 'employee', 'org_admin'] },
   // Approvals is only useful to people who can actually approve - employees
   // never have anything in here. super_admin + tenant_admin keep access for
   // cross-cutting / override scenarios.
-  { to: '/approvals',    label: 'Approvals',       icon: <FolderCheck className="h-4 w-4" />,   roles: ['super_admin', 'tenant_admin', 'approver'] },
+  { to: '/approvals',    label: 'Approvals',       icon: <FolderCheck className="h-4 w-4" />,   roles: ['super_admin', 'tenant_admin', 'approver', 'org_admin'] },
 ];
 
 const ROLE_LABEL: Record<Role, string> = {

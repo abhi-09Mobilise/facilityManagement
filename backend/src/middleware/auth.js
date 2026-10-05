@@ -44,16 +44,22 @@ function requireRole(...roles) {
   };
 }
 
-function tenantChecker(req,res,next){
-  
-  
-    if(req.query.tenant_id != req.user.tenant_id &&  req.user.role != 'super_admin')
-    {
-      console.log("tenantChecker", req.user , req.query)
-      return res.status(403).json({status : false, msg : 'Forbidden'})
-    }
-  
-  next();
+// Cross-tenant guard. Only meaningful when the caller explicitly scopes a
+// request by ?tenant_id=. A non-super-admin may only pass their OWN tenant_id;
+// anything else is a cross-tenant probe and is rejected.
+//
+// When no tenant_id query param is present (e.g. a POST create, or a list that
+// relies on the JWT), there is nothing to cross-check — the handler derives the
+// tenant from req.user.tenant_id itself — so the request is allowed through.
+function tenantChecker(req, res, next) {
+  if (req.user && req.user.role === 'super_admin') return next();
+
+  const q = req.query.tenant_id;
+  const scoped = q !== undefined && q !== null && String(q).trim() !== '';
+  if (scoped && String(q) !== String(req.user.tenant_id)) {
+    return res.status(403).json({ status: false, msg: 'Forbidden' });
+  }
+  return next();
 }
 
 function signToken(user) {

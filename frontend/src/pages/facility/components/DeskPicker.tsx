@@ -9,7 +9,7 @@
 // click-to-claim handler, so duplicating ~80 lines of SVG keeps the editor
 // and picker independent.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FacilityLayout, FacilityLayoutV1, LayoutObject, LayoutObjectType } from '@/types';
 
 export interface DeskPickerProps {
@@ -43,6 +43,16 @@ const CHAIR_AVAILABLE = { fill: '#bbf7d0', stroke: '#15803d', text: '#14532d' };
 const CHAIR_OCCUPIED  = { fill: '#e2e8f0', stroke: '#94a3b8', text: '#64748b' };
 const CHAIR_SELECTED  = { fill: '#bfdbfe', stroke: '#1d4ed8', text: '#1e3a8a' };
 
+// S/M/L marker sizing — mirrors the admin layout editor's Display panel
+// (pinSize { S:1.0, M:1.5, L:2.0 }) so the dots a booker sees match the sizing
+// used while designing the plan. Chairs/tables render as small coloured dots at
+// their centre, which keeps dense, tightly-packed scanned plans readable.
+const PIN_SIZE: Record<'S' | 'M' | 'L', number> = { S: 1.0, M: 1.5, L: 2.0 };
+
+// Type colours for the table dots (chairs use the status palette above).
+const PIN_TABLE_ROUND = '#059669'; // emerald
+const PIN_TABLE_RECT  = '#ea580c'; // orange
+
 function parseLayout(raw: DeskPickerProps['value']): FacilityLayout | null {
   if (!raw) return null;
   let parsed: FacilityLayout | FacilityLayoutV1 | null = null;
@@ -72,6 +82,20 @@ export default function DeskPicker({ value, occupiedDeskIds, selectedDeskIds, on
   const layout = useMemo(() => parseLayout(value), [value]);
   const occupiedSet = useMemo(() => new Set(occupiedDeskIds || []), [occupiedDeskIds]);
   const selectedSet = useMemo(() => new Set(selectedDeskIds || []), [selectedDeskIds]);
+
+  // S/M/L dot size, mirroring the layout editor's Display control. Persisted
+  // per-browser so a booker's preference sticks between visits.
+  const [sizeChoice, setSizeChoice] = useState<'S' | 'M' | 'L'>(() => {
+    try {
+      const v = localStorage.getItem('fm_picker_dot_size');
+      if (v === 'S' || v === 'M' || v === 'L') return v;
+    } catch { /* ignore */ }
+    return 'M';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('fm_picker_dot_size', sizeChoice); } catch { /* ignore */ }
+  }, [sizeChoice]);
+  const pinSize = PIN_SIZE[sizeChoice];
 
   if (!layout) {
     return (
@@ -124,9 +148,32 @@ export default function DeskPicker({ value, occupiedDeskIds, selectedDeskIds, on
         ) : (
           <span className="font-medium text-muted-foreground">Floor plan reference</span>
         )}
-        {layout.mode === 'image' && layout.imageUrl && (
-          <span className="ml-auto text-muted-foreground">Floor plan overlay enabled</span>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {chairTotal > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground mr-0.5">Size</span>
+              {(['S', 'M', 'L'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSizeChoice(s)}
+                  aria-pressed={sizeChoice === s}
+                  className={
+                    'px-1.5 py-0.5 rounded border text-[11px] font-semibold leading-none ' +
+                    (sizeChoice === s
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-card text-muted-foreground border-line hover:bg-muted')
+                  }
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+          {layout.mode === 'image' && layout.imageUrl && (
+            <span className="text-muted-foreground">Floor plan overlay enabled</span>
+          )}
+        </div>
       </div>
 
       <div className="overflow-auto bg-muted/20 rounded-md border p-3 flex items-center justify-center">
@@ -151,9 +198,14 @@ export default function DeskPicker({ value, occupiedDeskIds, selectedDeskIds, on
             </linearGradient>
           </defs>
 
-          {/* Background: uploaded floor plan, OR faint grid for blank layouts */}
+          {/* Background: uploaded floor plan, OR faint grid for blank layouts.
+              MUST use the same "meet" (letterboxed) fit the admin editor uses
+              when placing chairs (DeskLayoutEditor's scan maps chair positions
+              with imgScale = min(canvasW/imgW, canvasH/imgH) + letterbox
+              offsets). Using "slice" here scaled the image differently from the
+              chairs, so the chairs looked clustered / off the furniture. */}
           {layout.mode === 'image' && layout.imageUrl ? (
-            <image href={layout.imageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid slice" />
+            <image href={layout.imageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid meet" />
           ) : (
             <>
               {Array.from({ length: Math.ceil(W / 40) + 1 }, (_, i) => (
@@ -169,6 +221,7 @@ export default function DeskPicker({ value, occupiedDeskIds, selectedDeskIds, on
             <ObjectShape
               key={o.id}
               o={o}
+              pinSize={pinSize}
               isOccupied={o.type === 'chair' && occupiedSet.has(o.id)}
               isSelected={o.type === 'chair' && selectedSet.has(o.id)}
               onChairClick={(id) => onToggle(id)}
@@ -180,8 +233,9 @@ export default function DeskPicker({ value, occupiedDeskIds, selectedDeskIds, on
   );
 }
 
-function ObjectShape({ o, isOccupied, isSelected, onChairClick }: {
+function ObjectShape({ o, pinSize, isOccupied, isSelected, onChairClick }: {
   o: LayoutObject;
+  pinSize: number;
   isOccupied: boolean;
   isSelected: boolean;
   onChairClick: (id: string) => void;
@@ -193,51 +247,46 @@ function ObjectShape({ o, isOccupied, isSelected, onChairClick }: {
   const cy = o.y + h / 2;
   const p = PRESETS[o.type];
 
-  // ---- chair: clickable, status-coloured ----
+  // ---- chair: clickable, status-coloured DOT (sized by S/M/L) ----
+  // Matches the admin layout editor's pin markers: a small coloured dot at the
+  // chair's centre. Centre is unchanged, so the pick lands exactly on the seat.
   if (o.type === 'chair') {
     const palette = isSelected ? CHAIR_SELECTED : isOccupied ? CHAIR_OCCUPIED : CHAIR_AVAILABLE;
-    const back = 4;
+    const r = 5 * pinSize;
     return (
       <g
-        transform={`rotate(${rot} ${cx} ${cy})`}
         style={{ cursor: isOccupied ? 'not-allowed' : 'pointer' }}
         onClick={() => { if (!isOccupied) onChairClick(o.id); }}
         aria-label={`Chair ${o.label || o.id}${isOccupied ? ' (taken)' : isSelected ? ' (your pick)' : ' (available)'}`}
       >
-        <rect x={o.x} y={o.y} width={w} height={back}
-          rx={2} ry={2} fill={palette.stroke} opacity={0.7} />
-        <rect x={o.x + 1} y={o.y + back} width={w - 2} height={h - back - 1}
-          rx={6} ry={6} fill={palette.fill} stroke={palette.stroke} strokeWidth={isSelected ? 2.5 : 1.5} />
-        <text x={cx} y={cy + 4}
-          textAnchor="middle"
-          fontSize={10}
-          fontWeight={600}
-          fill={palette.text}
-          pointerEvents="none">
-          {o.label || o.id}
-        </text>
+        {/* native hover tooltip so the booker can read the chair id */}
+        <title>{`${o.label || o.id}${isOccupied ? ' — taken' : isSelected ? ' — your pick' : ' — available'}`}</title>
+        {/* selection halo */}
+        {isSelected && (
+          <circle cx={cx} cy={cy} r={r + 3} fill={palette.stroke} opacity={0.18} pointerEvents="none" />
+        )}
+        <circle cx={cx} cy={cy} r={r}
+          fill={palette.fill} stroke={palette.stroke} strokeWidth={isSelected ? 2 : 1.25} />
       </g>
     );
   }
 
-  // ---- decorative shapes (mirror admin renderer minus animations) ----
+  // ---- tables: non-interactive type-coloured DOTS (sized by S/M/L) ----
   if (o.type === 'table_round') {
-    const r = Math.min(w, h) / 2;
+    const r = 6 * pinSize;
     return (
-      <g transform={`rotate(${rot} ${cx} ${cy})`}>
-        <ellipse cx={cx + 2} cy={cy + 3} rx={r} ry={r * 0.95} fill="#0f172a" opacity={0.08} />
-        <circle cx={cx} cy={cy} r={r} fill="url(#dp-wood)" stroke={p.stroke} strokeWidth={1.5} />
-        <circle cx={cx} cy={cy} r={Math.max(2, r - 6)} fill="none" stroke={p.stroke} strokeOpacity={0.25} strokeWidth={1} />
+      <g>
+        <title>{o.label || 'Round table'}</title>
+        <circle cx={cx} cy={cy} r={r} fill={PIN_TABLE_ROUND} opacity={0.9} pointerEvents="none" />
       </g>
     );
   }
   if (o.type === 'table_rect') {
+    const r = 6 * pinSize;
     return (
-      <g transform={`rotate(${rot} ${cx} ${cy})`}>
-        <rect x={o.x + 2} y={o.y + 3} width={w} height={h} rx={8} ry={8} fill="#0f172a" opacity={0.08} />
-        <rect x={o.x} y={o.y} width={w} height={h} rx={8} ry={8} fill="url(#dp-wood)" stroke={p.stroke} strokeWidth={1.5} />
-        <line x1={o.x + w / 2} y1={o.y + 6} x2={o.x + w / 2} y2={o.y + h - 6}
-          stroke={p.stroke} strokeOpacity={0.18} strokeWidth={1} />
+      <g>
+        <title>{o.label || 'Table'}</title>
+        <circle cx={cx} cy={cy} r={r} fill={PIN_TABLE_RECT} opacity={0.9} pointerEvents="none" />
       </g>
     );
   }

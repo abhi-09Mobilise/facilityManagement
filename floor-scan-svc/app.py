@@ -89,7 +89,11 @@ from templates_matcher import (
 # Phase 2 (later): swap yolo11n.pt for a fine-tuned best.pt trained on
 # labeled floor plans; add a fallback chain if the fine-tuned model returns
 # nothing. No code changes on the Node backend or frontend for either phase.
-from ultralytics import YOLO
+# NOTE: `ultralytics` (and its torch/torchvision deps, ~1-2 GB) is an OPTIONAL
+# dependency used ONLY by /scan-yolo and /scan-architect. It is imported LAZILY
+# inside _load_yolo() / _load_architect() so the service still boots and serves
+# the OpenCV /scan and AI /scan-ai endpoints when ultralytics is NOT installed
+# (those two YOLO endpoints then return 503 instead of crashing startup).
 
 
 # ----------------------------------------------------------------------
@@ -285,11 +289,19 @@ _architect_names: Dict[int, str] = {}
 
 
 def _load_yolo():
-    """Load the primary YOLOv11 detector into the module-level _yolo global."""
+    """Load the primary YOLOv11 detector into the module-level _yolo global.
+    Non-fatal: if ultralytics/torch isn't installed (lean deploys skip it to
+    avoid the ~1-2 GB torch install) the service still boots — /scan-yolo then
+    returns 503 while /scan and /scan-ai keep working."""
     global _yolo
-    log.info("Loading YOLO model: %s", YOLO_MODEL_NAME)
-    _yolo = YOLO(YOLO_MODEL_NAME)
-    log.info("YOLO ready. Classes known: %d", len(_yolo.names))
+    try:
+        from ultralytics import YOLO  # lazy import: avoids requiring torch to boot
+        log.info("Loading YOLO model: %s", YOLO_MODEL_NAME)
+        _yolo = YOLO(YOLO_MODEL_NAME)
+        log.info("YOLO ready. Classes known: %d", len(_yolo.names))
+    except Exception as e:
+        _yolo = None
+        log.warning("YOLO unavailable (%s: %s). /scan-yolo will return 503.", type(e).__name__, e)
 
 
 def _load_architect():
@@ -300,6 +312,7 @@ def _load_architect():
         log.info("Architect model disabled (ARCHITECT_ENABLED=false). /scan-architect will return 503.")
         return
     try:
+        from ultralytics import YOLO  # lazy import: avoids requiring torch to boot
         # Prefer a pre-downloaded local file (see README: `curl -o architect_best.pt
         # https://huggingface.co/SamirShabani/Architect/resolve/main/best.pt`).
         # Fall back to huggingface_hub if we ever run in an env with proper SSL.
@@ -1458,6 +1471,8 @@ async def scan_yolo(image: UploadFile = File(...)):
     aspect-ratio heuristic to split dining-table detections into the two
     buckets the frontend expects.
     """
+    if _yolo is None:
+        raise HTTPException(status_code=503, detail="YOLO model not available (ultralytics/torch not installed on this deployment)")
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Upload must be an image")
 

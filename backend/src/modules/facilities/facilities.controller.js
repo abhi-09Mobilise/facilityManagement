@@ -209,7 +209,7 @@ exports.create = asyncHandler(async function (req, res) {
       '       min_advance_minutes, max_advance_days, max_per_user_per_day, ' +
       '       max_per_user_per_week, max_per_user_per_month, pre_end_notify_minutes, ' +
       '       description, terms_and_conditions, image_url, layout_json, requires_approval, shared_booking, facility_approver_user_id) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         site.row.tenant_id, site.row.id, floorId,
         b.name, b.type, capVal, offlineVal,

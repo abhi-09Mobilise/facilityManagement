@@ -81,7 +81,7 @@ export default function LoginPage() {
             <Building2 className="h-5 w-5" />
           </div>
           <div>
-            <div className="font-display text-[19px] font-bold tracking-tight">SoCampus Desk</div>
+            <div className="font-display text-[19px] font-bold tracking-tight">Desk booking</div>
             <div className="text-xs text-[#8FA0BA]">Workplace booking · Mobilise App Lab</div>
           </div>
         </div>
@@ -125,7 +125,7 @@ export default function LoginPage() {
               <div className="grid h-[30px] w-[30px] place-items-center rounded-[9px] bg-ink text-white">
                 <Building2 className="h-4 w-4" />
               </div>
-              <div className="font-display text-[15px] font-bold">SoCampus Desk</div>
+              <div className="font-display text-[15px] font-bold">Desk booking</div>
             </div>
 
             <h2 className="font-display text-[21px] font-semibold tracking-tight">Sign in</h2>

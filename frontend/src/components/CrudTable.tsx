@@ -121,7 +121,6 @@ export default function CrudTable<T extends Record<string, any>>({
         loading={loading}
         disableRowSelectionOnClick
         disableColumnResize
-        disableColumnReorder
         disableColumnMenu
         slots={{
           noRowsOverlay: () => (

@@ -157,6 +157,11 @@ export default function UserCreatePage() {
     try {
       const res = await usersApi.create({
         username: form.username.trim(),
+        // Attach the new user to the currently-scoped tenant + organisation so
+        // they show up under that org (otherwise the backend drops them into
+        // the tenant's "default" org and org-filtered lists won't see them).
+        tenant_id: scope.tenantId ?? undefined,
+        organisation_id: scope.organisationId ?? undefined,
         // password intentionally omitted — backend generates a random one and
         // the user sets their own via the invite/reset email link.
         name: form.name || undefined,

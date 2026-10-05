@@ -20,6 +20,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import PageSpinner from '@/components/PageSpinner';
 import { MastersFilterProvider } from '@/contexts/MastersFilterContext';
+import { useAuth } from '@/context/AuthContext';
 
 // Ordered list of tabs. The `segment` matches the URL under /admin/masters/.
 const TABS: { segment: string; label: string }[] = [
@@ -41,7 +42,13 @@ function activeSegmentFor(pathname: string): string {
 function MastersShell() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const activeSegment = activeSegmentFor(location.pathname);
+
+  // Org admins manage the hierarchy BELOW the organisation (sites → floors →
+  // facilities) but never organisations/tenants themselves, so hide that tab.
+  const canSeeOrganisations = user?.role === 'super_admin' || user?.role === 'tenant_admin';
+  const visibleTabs = TABS.filter((t) => t.segment !== 'organisations' || canSeeOrganisations);
 
   function handleTabChange(_e: React.SyntheticEvent, next: string) {
     if (next === activeSegment) return;
@@ -64,7 +71,7 @@ function MastersShell() {
           allowScrollButtonsMobile
           sx={{ borderBottom: 1, borderColor: 'divider', px: 1 }}
         >
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <Tab key={t.segment} value={t.segment} label={t.label} sx={{ textTransform: 'none' }} />
           ))}
         </Tabs>

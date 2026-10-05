@@ -201,10 +201,10 @@ export default function App() {
                 <RequireRole roles={['super_admin', 'tenant_admin']}><RedirectToMasters segment="buildings" /></RequireRole>
               } />
               <Route path="/admin/departments" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentsListPage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><DepartmentsListPage /></RequireRole>
               } />
               <Route path="/admin/departments/:id" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><DepartmentFormPage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><DepartmentFormPage /></RequireRole>
               } />
               <Route path="/admin/meal-times" element={
                 <RequireRole roles={['super_admin', 'tenant_admin']}><MealTimesListPage /></RequireRole>
@@ -232,8 +232,8 @@ export default function App() {
                 }
               >
                 <Route path="/admin/masters"                     element={<Navigate to="/admin/masters/sites" replace />} />
-                <Route path="/admin/masters/organisations"       element={<OrganisationsListPage />} />
-                <Route path="/admin/masters/organisations/:id"   element={<OrganisationFormPage />} />
+                <Route path="/admin/masters/organisations"       element={<RequireRole roles={['super_admin', 'tenant_admin']}><OrganisationsListPage /></RequireRole>} />
+                <Route path="/admin/masters/organisations/:id"   element={<RequireRole roles={['super_admin', 'tenant_admin']}><OrganisationFormPage /></RequireRole>} />
                 <Route path="/admin/masters/sites"               element={<SitesListPage />} />
                 <Route path="/admin/masters/sites/:id"           element={<SiteFormPage />} />
                 <Route path="/admin/masters/buildings"           element={<BuildingsListPage />} />
@@ -245,13 +245,13 @@ export default function App() {
               </Route>
 
               <Route path="/admin/users" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><UsersListPage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><UsersListPage /></RequireRole>
               } />
               <Route path="/users/new" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><UserCreatePage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><UserCreatePage /></RequireRole>
               } />
               <Route path="/admin/users/:id" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><UserEditPage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin', 'org_admin']}><UserEditPage /></RequireRole>
               } />
 
               <Route path="*" element={<Navigate to="/" replace />} />

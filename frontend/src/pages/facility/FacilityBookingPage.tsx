@@ -11,10 +11,12 @@ import { Alert, Box, CircularProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import FacilityCardGrid from './components/FacilityCardGrid';
 import { facilitiesApi } from '@/api/facilities.api';
+import { useTenantScope } from '@/context/TenantScopeContext';
 import type { Facility } from '@/types';
 
 export default function FacilityBookingPage() {
   const navigate = useNavigate();
+  const scope = useTenantScope();
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,15 @@ export default function FacilityBookingPage() {
     let alive = true;
     setLoading(true);
     setError(null);
-    facilitiesApi.list({ limit: 200 })
+    // Scope to the selected tenant + organisation so admins see only the
+    // picked org's facilities. Org-scoped roles (employee/approver/org_admin)
+    // are auto-filtered by the backend via their JWT, so passing undefined
+    // here is harmless for them (empty params are stripped before the request).
+    facilitiesApi.list({
+      limit: 200,
+      tenant_id: scope.tenantId ?? undefined,
+      organisation_id: scope.organisationId ?? undefined,
+    })
       .then((r) => { if (alive) setFacilities(r.data?.data || []); })
       .catch((e: unknown) => {
         if (!alive) return;
@@ -34,7 +44,7 @@ export default function FacilityBookingPage() {
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [scope.tenantId, scope.organisationId]);
 
   return (
     <Box>

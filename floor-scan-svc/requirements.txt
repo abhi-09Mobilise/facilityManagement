@@ -1,12 +1,16 @@
-# Loose lower bounds (not hard pins) so pip picks the newest version that
-# has a prebuilt wheel for whichever Python you're on. The earlier hard
-# pins (numpy==1.26.4 etc.) didn't have wheels for Python 3.13+ and tried
-# to compile from source, which requires Visual Studio Build Tools on
-# Windows.
+# Floor-scan microservice dependencies.
 #
-# Tested working on Python 3.10 - 3.13. For Python 3.14, install Python
-# 3.12 alongside (see README) - 3.14 wheels are still patchy across the
-# scientific Python stack as of late 2025.
+# The MINIMAL runtime set below runs:
+#   • /scan        — OpenCV contour detection
+#   • /scan-ai     — AI vision via the provider chosen by AI_PROVIDER in .env
+#                    (currently Gemini via google-genai)
+#
+# The heavy/optional packages are commented out at the bottom. Install them
+# ONLY if you enable the matching endpoints/providers. In particular,
+# `ultralytics` pulls torch + torchvision (~1-2 GB) and is the usual cause of
+# "OSError: [Errno 28] No space left on device" during pip install.
+#
+# Tested on Python 3.10 - 3.13.
 
 fastapi>=0.115
 uvicorn[standard]>=0.30
@@ -14,26 +18,14 @@ opencv-python-headless>=4.10
 numpy>=1.26
 python-multipart>=0.0.9
 pydantic>=2.9
-
-# YOLOv11 pretrained detector — powers the /scan-yolo endpoint.
-# Pulls torch + torchvision as transitive deps (~500 MB one-time).
-ultralytics>=8.3
-
-# AI vision providers — the /scan-ai endpoint routes to one of these based
-# on the AI_PROVIDER env var. All three SDKs are installed so operators can
-# flip providers at any time by editing .env + restarting the service.
-#
-# Gemini (Google). Reads GEMINI_API_KEY from .env via python-dotenv. SSL
-# trust for MITM / corporate-CA scenarios is handled in-code by
-# snapshotting the Windows certificate store into an in-memory PEM bundle
-# (see _load_windows_ca_pem in app.py) — no truststore dependency.
-google-genai>=1.0
-# Claude (Anthropic). Reads CLAUDE_API_KEY from .env.
-anthropic>=0.40
-# OpenAI (ChatGPT). Reads OPENAI_API_KEY from .env.
-openai>=1.50
-
 python-dotenv>=1.0
-# Pillow is already pulled in transitively by ultralytics, but /scan-ai
-# imports it directly so we pin the intent here too.
 Pillow>=10.0
+
+# ---- AI provider SDK (keep only the one you use) ----
+google-genai>=1.0       # Gemini provider -> /scan-ai, /scan-gemini (AI_PROVIDER=gemini)  [ACTIVE]
+# openai>=1.50          # OpenAI / Kimi-Moonshot (OpenAI-compatible)   (AI_PROVIDER=openai)
+# anthropic>=0.40       # Claude provider                              (AI_PROVIDER=claude)
+
+# ---- Local models (OPTIONAL, LARGE — needs plenty of disk) ----
+# ultralytics>=8.3      # /scan-yolo + /scan-architect — pulls torch (~1-2 GB)
+# huggingface_hub>=0.24 # /scan-architect weight download
