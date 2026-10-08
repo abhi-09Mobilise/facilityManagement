@@ -11,6 +11,7 @@ const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const mailer = require('./utils/mailer');
 const checkoutSweeper = require('./jobs/checkoutSweeper'); // F02
+const noShowSweeper = require('./jobs/noShowSweeper'); // M12
 
 const app = express();
 
@@ -66,4 +67,7 @@ app.listen(config.port, () => {
   mailer.verifyConnection();
   // F02 - start the check-out sweeper (every 5 minutes by default).
   checkoutSweeper.start(Number(process.env.CHECKOUT_SWEEP_MS) || undefined);
+  // M12 - start the no-show auto-release sweeper (every 5 minutes by default).
+  // Set NO_SHOW_SWEEP_MODE=log to dry-run (log candidates, release nothing).
+  noShowSweeper.start(Number(process.env.NO_SHOW_SWEEP_MS) || undefined);
 });

@@ -68,7 +68,7 @@ async function aggregateFacilityDay(day, facility) {
     "SELECT " +
     "  COALESCE(b.department_id, 0) AS department_id, " +
     "  SUM(CASE WHEN b.status IN ('pending','approved','completed') THEN 1 ELSE 0 END) AS bookings_count, " +
-    "  SUM(CASE WHEN b.status = 'cancelled' THEN 1 ELSE 0 END) AS released_count, " +
+    "  SUM(CASE WHEN b.status IN ('cancelled','released') THEN 1 ELSE 0 END) AS released_count, " +
     "  SUM(CASE WHEN b.status IN ('approved','completed') " +
     "            AND b.checkout_status = 'approved' THEN 1 ELSE 0 END) AS checked_in_count, " +
     "  SUM(CASE WHEN b.status IN ('pending','approved','completed') THEN " +

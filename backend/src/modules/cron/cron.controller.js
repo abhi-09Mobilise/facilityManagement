@@ -26,6 +26,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const mailer = require('../../utils/mailer');
 const { resolveRecipients } = require('../bookings/chainMaterializer');
 const occupancyAggregator = require('../../jobs/occupancyAggregator');
+const noShowSweeper = require('../../jobs/noShowSweeper'); // M12
 
 // Shared secret middleware. Reject without it so a casual external caller
 // can't trigger N mails. The secret lives in .env (CRON_SECRET).
@@ -183,6 +184,27 @@ exports.aggregateOccupancy = asyncHandler(async function (req, res) {
     `facilities=${summary.facilities_processed} ` +
     `rows_upserted=${summary.rows_upserted} ` +
     `failures=${summary.failures} elapsed=${elapsed}ms`
+  );
+  return ok(res, { ...summary, elapsed_ms: elapsed });
+});
+
+
+// ----- release-no-shows (M12) -----------------------------------------
+//
+// Releases approved bookings whose check-in grace window closed with nobody
+// checked in, freeing the seat for the rest of the slot. Idempotent: a second
+// call finds no new candidates. Honours NO_SHOW_SWEEP_MODE=log for a dry run.
+//
+// The in-process interval sweeper (jobs/noShowSweeper, started in server.js)
+// already runs this every few minutes; this endpoint lets an external
+// scheduler drive it instead / as well, matching the other cron jobs.
+exports.releaseNoShows = asyncHandler(async function (req, res) {
+  const startedAt = Date.now();
+  const summary = await noShowSweeper.sweepOnce();
+  const elapsed = Date.now() - startedAt;
+  console.log(
+    `[cron.releaseNoShows] mode=${summary.mode} grace=${summary.grace_min}m ` +
+    `candidates=${summary.candidates} released=${summary.released} elapsed=${elapsed}ms`
   );
   return ok(res, { ...summary, elapsed_ms: elapsed });
 });

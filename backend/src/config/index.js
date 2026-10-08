@@ -20,6 +20,12 @@ const config = {
     dir: process.env.UPLOAD_DIR || './uploads',
     maxBytes: (parseInt(process.env.MAX_UPLOAD_MB || '10', 10)) * 1024 * 1024,
   },
+  // QR / arrival check-in window (docs/10_qr_checkin.md). Flat per-tenant
+  // constants until the per-facility grace-config feature (M3) lands.
+  checkin: {
+    opensMin: parseInt(process.env.CHECKIN_OPENS_MIN || '15', 10), // how early you can check in
+    graceMin: parseInt(process.env.CHECKIN_GRACE_MIN || '30', 10), // how late before it's a no-show
+  },
   mail: {
     host: process.env.SMTP_HOST || '',
     port: parseInt(process.env.SMTP_PORT || '587', 10),

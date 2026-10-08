@@ -37,7 +37,42 @@ export interface FacilityDetailPayload {
   operating_hours: PublicHour[];
 }
 
+// M15 - QR arrival check-in. Normalised outcome so the page doesn't have to
+// know the success-vs-failure envelope shapes (success nests the card under
+// `data`; failure spreads it at the top level alongside `code`).
+export interface CheckinOutcome {
+  ok: boolean;
+  msg: string;
+  code?: string;          // CHECKIN_* reason on failure
+  already?: boolean;      // true if they were already checked in
+  facility_name?: string;
+  facility_type?: string;
+  start_at?: string;
+  end_at?: string;
+  checked_in_at?: string;
+}
+
 export const publicApi = {
+  // validateStatus lets us read the JSON body on 4xx (window/approval errors)
+  // instead of axios throwing before we can show a friendly reason.
+  checkin: (code: string): Promise<CheckinOutcome> =>
+    pub
+      .post('/public/checkin', { code }, { validateStatus: () => true })
+      .then((r) => {
+        const b: Record<string, unknown> = r.data || {};
+        const card = (b.data as Record<string, unknown>) || b;
+        return {
+          ok: !!b.status,
+          msg: (b.msg as string) || (b.status ? 'Checked in' : 'Check-in failed'),
+          code: b.code as string | undefined,
+          already: card.already as boolean | undefined,
+          facility_name: card.facility_name as string | undefined,
+          facility_type: card.facility_type as string | undefined,
+          start_at: card.start_at as string | undefined,
+          end_at: card.end_at as string | undefined,
+          checked_in_at: card.checked_in_at as string | undefined,
+        };
+      }),
   landing: (slug: string) =>
     pub.get<{ status: boolean; data?: LandingPayload; msg?: string }>(`/public/t/${encodeURIComponent(slug)}`).then((r) => r.data),
   sites: (slug: string) =>

@@ -10,5 +10,6 @@ const router = express.Router();
 
 router.post('/pre-end-notify', ctrl.requireCronKey, ctrl.preEndNotify);
 router.post('/aggregate-occupancy', ctrl.requireCronKey, ctrl.aggregateOccupancy);
+router.post('/release-no-shows', ctrl.requireCronKey, ctrl.releaseNoShows); // M12
 
 module.exports = router;

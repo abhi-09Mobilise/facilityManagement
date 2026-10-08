@@ -26,6 +26,7 @@ const { intOrNull } = require('../../utils/tenantScope');
 const { materializeChain, resolveRecipients } = require('./chainMaterializer');
 const { issueToken } = require('../../utils/approvalActionTokens');
 const bookingActionTokens = require('../../utils/bookingActionTokens');
+const checkinCode = require('../../utils/checkinCode'); // M15 QR check-in code
 const slotOverrides = require('../facilities/slotOverrides.controller'); // F01 effectiveCapacity
 const mailer = require('../../utils/mailer');
 
@@ -434,14 +435,19 @@ exports.create = asyncHandler(async function (req, res) {
   // client. Lets manager reports group "bookings per department" reliably.
   const departmentId = booker.department_id || null;
 
+  // M15 - mint the arrival check-in code now so it's stamped on the row at
+  // create (emailed later in the confirmation). Unique across all bookings;
+  // the public /checkin page resolves a booking from this code alone.
+  const checkinCodeValue = await checkinCode.generateUnique(query);
+
   let txResult;
   try {
     txResult = await withTransaction(async function (conn) {
       const [r] = await conn.execute(
         'INSERT INTO `bookings` ' +
         '   (tenant_id, facility_id, desk_id, user_id, department_id, title, start_at, end_at, ' +
-        '    repeat_type, status, remarks, dont_disturb, attendee_count) ' +
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+        '    repeat_type, status, checkin_code, remarks, dont_disturb, attendee_count) ' +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
         [
           booker.tenant_id, facilityId,
           // F09 - optional desk id (string from facility.layout_json.desks[].id)
@@ -449,6 +455,7 @@ exports.create = asyncHandler(async function (req, res) {
           booker.id, departmentId,
           titleStr, startAt, endAt,
           b.repeat_type || 'none',
+          checkinCodeValue,
           b.remarks || null,
           b.dont_disturb ? 1 : 0,
           attendeeCount,
@@ -987,7 +994,7 @@ exports.cancel = asyncHandler(async function (req, res) {
 
 async function _sendBookingConfirmedEmail(bookingId) {
   const rows = await query(
-    'SELECT b.id, b.user_id, b.start_at, b.end_at, b.attendee_count, ' +
+    'SELECT b.id, b.user_id, b.start_at, b.end_at, b.attendee_count, b.checkin_code, ' +
     '       f.name AS facility_name, f.type AS facility_type, ' +
     '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname ' +
     '  FROM `bookings`   b ' +
@@ -1017,6 +1024,7 @@ async function _sendBookingConfirmedEmail(bookingId) {
     startAt: startStr,
     endAt:   endStr,
     attendeeCount: b.attendee_count,
+    checkinCode: b.checkin_code,   // M15 - printed on the confirmation for QR check-in
     rescheduleToken: rToken,
     cancelToken: cToken,
   });

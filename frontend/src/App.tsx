@@ -41,6 +41,9 @@ const PublicSitesPage           = lazy(() => import('@/pages/public/PublicSitesP
 const PublicSiteFacilitiesPage  = lazy(() => import('@/pages/public/PublicSiteFacilitiesPage'));
 const PublicFacilityDetailPage  = lazy(() => import('@/pages/public/PublicFacilityDetailPage'));
 
+// --- Lazy: M15 QR arrival check-in (public, no login) -------------------
+const CheckinPage               = lazy(() => import('@/pages/checkin/CheckinPage'));
+
 // --- Lazy: heavy admin dashboard (recharts ~95KB gz) --------------------
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const LiveOverviewPage = lazy(() => import('@/pages/overview/LiveOverviewPage'));
@@ -125,6 +128,9 @@ export default function App() {
             <Route path="/register"        element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password"  element={<ResetPasswordPage />} />
+
+            {/* M15 - QR arrival check-in (no auth, no AppLayout) */}
+            <Route path="/checkin"                                  element={<CheckinPage />} />
 
             {/* F03 - Public portal (no auth, no AppLayout) */}
             <Route path="/p/:slug"                                  element={<PublicLandingPage />} />

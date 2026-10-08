@@ -247,7 +247,7 @@ function approvalRequested(opts) {
 function bookingConfirmed(opts) {
   const {
     to, bookerName, bookingId, facilityName, facilityType,
-    startAt, endAt, attendeeCount,
+    startAt, endAt, attendeeCount, checkinCode,
     rescheduleToken, cancelToken,
   } = opts || {};
   if (!to) return;
@@ -259,6 +259,8 @@ function bookingConfirmed(opts) {
   };
   const { subject, html } = templates.bookingConfirmed({
     bookerName, facilityName, facilityType, startAt, endAt, attendeeCount,
+    checkinCode,                              // M15 - QR check-in code
+    checkinUrl: base + '/checkin',            // where the wall QR points
     rescheduleUrl: buildUrl(rescheduleToken, 'reschedule'),
     cancelUrl:     buildUrl(cancelToken, 'cancel'),
     ttlDays: 7,

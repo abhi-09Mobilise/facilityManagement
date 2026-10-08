@@ -255,10 +255,17 @@ function colorBtn(label, href, color) {
   );
 }
 
+// Format an 8-char check-in code as "ABCD-2345" for readability. Kept local
+// so the template has no dependency on backend utils (templates stay pure).
+function fmtCheckinCode(code) {
+  const c = String(code || '').toUpperCase();
+  return c.length === 8 ? c.slice(0, 4) + '-' + c.slice(4) : c;
+}
+
 exports.bookingConfirmed = function (opts) {
   const {
     bookerName, facilityName, facilityType, startAt, endAt,
-    attendeeCount, rescheduleUrl, cancelUrl, ttlDays,
+    attendeeCount, checkinCode, checkinUrl, rescheduleUrl, cancelUrl, ttlDays,
   } = opts || {};
 
   const summary =
@@ -277,12 +284,38 @@ exports.bookingConfirmed = function (opts) {
       ) : '') +
     '</table>';
 
+  // M15 - QR check-in code block. Big + monospace so it's easy to read off a
+  // phone and type on the /checkin page after scanning the venue QR.
+  const checkinBlock = checkinCode
+    ? (
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+          'style="width:100%;margin:18px 0;border-collapse:separate;">' +
+          '<tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 18px;">' +
+            '<div style="color:#1e3a8a;font-size:13px;font-weight:600;margin-bottom:6px;">' +
+              'Your check-in code' +
+            '</div>' +
+            '<div style="font-family:Consolas,Menlo,monospace;font-size:26px;font-weight:700;' +
+              'letter-spacing:3px;color:#1d4ed8;">' + esc(fmtCheckinCode(checkinCode)) + '</div>' +
+            '<div style="color:#475569;font-size:13px;margin-top:8px;">' +
+              'When you arrive, scan the check-in QR at the venue and enter this code to confirm ' +
+              'you\'re here' +
+              (checkinUrl
+                ? ' — or open <span style="color:#1d4ed8;word-break:break-all;">' + esc(checkinUrl) + '</span>'
+                : '') +
+              '.' +
+            '</div>' +
+          '</td></tr>' +
+        '</table>'
+      )
+    : '';
+
   const body =
     '<p style="font-size:16px;margin:0 0 12px;">' +
       'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
     '</p>' +
     '<p>Your booking has been <strong>confirmed</strong>.</p>' +
     summary +
+    checkinBlock +
     '<p style="margin:22px 0 8px;">Plans changed? Manage your booking below:</p>' +
     '<p style="margin:6px 0 16px;">' +
       colorBtn('Reschedule', rescheduleUrl, '#d97706') +
