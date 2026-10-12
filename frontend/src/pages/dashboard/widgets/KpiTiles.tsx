@@ -1,0 +1,160 @@
+// 5 KPI cards shown directly below the hero. Each card has: title, icon,
+// big number, secondary subtitle (optional trend chip), and a sparkline.
+
+import { Building2, DoorOpen, CalendarDays, Star, Coffee, TrendingUp, TrendingDown, Fingerprint } from 'lucide-react';
+import { AreaChart, Area, ResponsiveContainer, YAxis } from 'recharts';
+import { getKpiTiles, type KpiTile } from '../sampleData';
+
+// Turn a label like "Bookings · 30 days" into a safe SVG id fragment.
+// url(#...) refs break if the id contains spaces or non-ascii characters,
+// which is why the gradient-fill was rendering as a dark fallback.
+function slug(label: string): string {
+  return label.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+const iconFor: Record<string, { Icon: React.ElementType; bg: string; fg: string }> = {
+  'Total facilities':       { Icon: Building2,    bg: 'bg-blue-50',   fg: 'text-blue-600' },
+  'Booked right now':       { Icon: DoorOpen,     bg: 'bg-orange-50', fg: 'text-orange-600' },
+  'Bookings · 30 days':     { Icon: CalendarDays, bg: 'bg-emerald-50',fg: 'text-emerald-600' },
+  'Average feedback':       { Icon: Star,         bg: 'bg-amber-50',  fg: 'text-amber-600' },
+  'Pantry orders':          { Icon: Coffee,       bg: 'bg-rose-50',   fg: 'text-rose-600' },
+  'Biometric mismatches':   { Icon: Fingerprint,  bg: 'bg-slate-100', fg: 'text-slate-500' },
+};
+
+const sparkColorFor: Record<string, string> = {
+  'Total facilities':       '#2563eb',
+  'Booked right now':       '#f97316',
+  'Bookings · 30 days':     '#10b981',
+  'Average feedback':       '#f59e0b',
+  'Pantry orders':          '#f43f5e',
+};
+
+export function KpiTiles() {
+  const tiles = getKpiTiles();
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      {tiles.map((t) => <Tile key={t.label} tile={t} />)}
+    </div>
+  );
+}
+
+function Tile({ tile }: { tile: KpiTile }) {
+  const { Icon, bg, fg } = iconFor[tile.label] ?? { Icon: Building2, bg: 'bg-slate-50', fg: 'text-slate-600' };
+  const sparkColor = sparkColorFor[tile.label] ?? '#64748b';
+  const sparkData = tile.spark.map((v, i) => ({ i, v }));
+  const gradientId = `spark-${slug(tile.label)}`;
+  const lastIndex = sparkData.length - 1;
+
+  // Force every sparkline into the BOTTOM THIRD of its 48px container.
+  //
+  // The dashboard reads "upar tange huye" when the final point of a
+  // monotonically-increasing sparkline (Booked right now 10→28, Average
+  // feedback 3.9→4.2) ends up near the top of the drawing area under
+  // normal auto-scaling. Adding 2x the data range as headroom above the
+  // actual max squeezes the visible data into the bottom ~33% of the
+  // chart — so every line (regardless of trend) ends in the same low
+  // band and the row of tiles looks uniformly aligned.
+  const minVal = Math.min(...tile.spark);
+  const maxVal = Math.max(...tile.spark);
+  const range = maxVal - minVal || 1;
+  const yDomain: [number, number] = [minVal, maxVal + range * 2];
+
+  // Render a dot only on the final data point so every sparkline ends with
+  // a visible marker (matches the reference). Recharts calls this per
+  // point and expects a React element back — return an empty <g /> for
+  // the ones we don't want to see.
+  const endpointDot = (props: { cx?: number; cy?: number; index?: number }) => {
+    if (props.index !== lastIndex || props.cx == null || props.cy == null) {
+      return <g key={`spark-empty-${props.index}`} />;
+    }
+    return (
+      <circle
+        key={`spark-dot-${props.index}`}
+        cx={props.cx}
+        cy={props.cy}
+        r={2.5}
+        fill={sparkColor}
+        stroke="white"
+        strokeWidth={1.5}
+      />
+    );
+  };
+
+  // Capacity bar: for "Total facilities" we show a stacked site-mix bar as
+  // the "spark" slot. Everything else uses an area/line sparkline.
+  const isTotalFacilities = tile.label === 'Total facilities';
+
+  return (
+    <div className="relative rounded-2xl bg-white border border-slate-200/70 shadow-sm p-4 overflow-hidden flex flex-col">
+      <div className="flex items-start justify-between">
+        <div className="min-w-0">
+          <div className="text-[11px] font-medium text-slate-500">{tile.label}</div>
+          <div className="mt-2 flex items-baseline gap-1.5">
+            <div className={'text-3xl font-bold tracking-tight ' + (tile.valueMuted ? 'text-slate-400' : 'text-slate-900')}>{tile.value}</div>
+            {tile.label === 'Average feedback' && <span className="text-slate-400 text-sm">/ 5</span>}
+            {tile.label === 'Booked right now' && <span className="text-slate-400 text-sm">/ 48</span>}
+          </div>
+        </div>
+        <div className={`h-8 w-8 rounded-lg ${bg} ${fg} flex items-center justify-center shrink-0`}>
+          <Icon className="h-4 w-4" />
+        </div>
+      </div>
+
+      {tile.trend && (
+        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold">
+          {tile.trend.direction === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+          {tile.trend.percent.toFixed(1)}%
+        </div>
+      )}
+
+      {tile.secondary && (
+        <div className="mt-1 text-[11px] text-slate-500 leading-tight">{tile.secondary}</div>
+      )}
+
+      {/* Sparkline / mini-chart area at the bottom. mt-auto anchors every
+          tile's chart to the card bottom so they all start at the same
+          vertical position regardless of how tall the content above is
+          (the "Bookings · 30 days" tile has an extra trend chip that was
+          pushing its chart lower than the others). */}
+      <div className="mt-auto h-12">
+        {isTotalFacilities ? (
+          <StackedSiteBar />
+        ) : sparkData.length > 1 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={sparkData} margin={{ top: 4, right: 6, bottom: 0, left: 2 }}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={sparkColor} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={sparkColor} stopOpacity={0.25} />
+                </linearGradient>
+              </defs>
+              <YAxis hide domain={yDomain} />
+              <Area type="monotone" dataKey="v" stroke={sparkColor} strokeWidth={2} fill={`url(#${gradientId})`} dot={endpointDot} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function StackedSiteBar() {
+  const parts = [
+    { site: 'Mumbai', count: 18, color: '#3b82f6' },
+    { site: 'Pune',   count: 14, color: '#10b981' },
+    { site: 'B’luru', count: 16, color: '#8b5cf6' },
+  ];
+  const total = parts.reduce((s, p) => s + p.count, 0);
+  return (
+    <div className="flex flex-col justify-end gap-1.5 h-full">
+      <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-100">
+        {parts.map((p) => (
+          <div key={p.site} style={{ width: `${(p.count / total) * 100}%`, background: p.color }} />
+        ))}
+      </div>
+      <div className="text-[10px] text-slate-500 leading-tight">
+        Mumbai 18 · Pune 14 · Bengaluru 16
+      </div>
+    </div>
+  );
+}

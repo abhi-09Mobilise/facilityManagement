@@ -46,7 +46,7 @@ const CheckinPage               = lazy(() => import('@/pages/checkin/CheckinPage
 
 // --- Lazy: heavy admin dashboard (recharts ~95KB gz) --------------------
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
-const LiveOverviewPage = lazy(() => import('@/pages/overview/LiveOverviewPage'));
+const SpaceDeskDashboardPage = lazy(() => import('@/pages/dashboard/SpaceDeskDashboardPage'));
 const RolePermissionsPage = lazy(() => import('@/pages/admin/permissions/RolePermissionsPage'));
 
 // --- Lazy: booker pages -------------------------------------------------
@@ -154,7 +154,7 @@ export default function App() {
 
               {/* Admin dashboards */}
               <Route path="/overview" element={
-                <RequireRole roles={['super_admin', 'tenant_admin']}><LiveOverviewPage /></RequireRole>
+                <RequireRole roles={['super_admin', 'tenant_admin']}><SpaceDeskDashboardPage /></RequireRole>
               } />
               <Route path="/admin/permissions" element={
                 <RequireRole roles={['super_admin', 'tenant_admin']}><RolePermissionsPage /></RequireRole>
