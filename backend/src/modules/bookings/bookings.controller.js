@@ -285,6 +285,47 @@ async function checkAvailability(facility, startAt, endAt, needAttendees = 1, op
   };
 }
 
+// ---------- operating-hours guard (M? — booking window) ---------------
+//
+// Enforces that a booking falls inside the facility's configured opening
+// hours. All comparisons run in SQL against the stored start_at/end_at (via
+// DAYOFWEEK/TIME), so they're immune to the Node process timezone.
+//
+// Rules:
+//   - facility has NO operating-hours rows  -> unrestricted (allow).
+//   - no row for the booking's weekday      -> facility closed that day (reject).
+//   - row exists and booking is same-day    -> require open <= start, end <= close.
+//   - row exists but booking spans days      -> can't express with daily hours;
+//                                               allow (don't falsely reject).
+// day_of_week is 0=Sun..6=Sat; MySQL DAYOFWEEK() is 1=Sun..7=Sat, hence -1.
+async function checkOperatingHours(facilityId, startAt, endAt) {
+  const rows = await query(
+    'SELECT open_time, close_time, ' +
+    '       (DATE(?) = DATE(?)) AS same_day, ' +
+    '       (TIME(?) >= open_time AND TIME(?) <= close_time) AS within ' +
+    '  FROM `facility_operating_hours` ' +
+    ' WHERE facility_id = ? AND day_of_week = DAYOFWEEK(?) - 1 LIMIT 1',
+    [startAt, endAt, startAt, endAt, facilityId, startAt]
+  );
+  if (rows.length === 0) {
+    const any = await query(
+      'SELECT COUNT(*) AS c FROM `facility_operating_hours` WHERE facility_id = ?',
+      [facilityId]
+    );
+    if (Number(any[0].c) > 0) {
+      return { ok: false, msg: 'This facility is closed on the selected day.' };
+    }
+    return { ok: true }; // no hours configured -> unrestricted
+  }
+  const r = rows[0];
+  if (Number(r.same_day) === 1 && Number(r.within) !== 1) {
+    const o = String(r.open_time).slice(0, 5);
+    const c = String(r.close_time).slice(0, 5);
+    return { ok: false, msg: `This facility is open ${o}–${c} on that day. Pick a time within opening hours.` };
+  }
+  return { ok: true };
+}
+
 // ---------- check ----------------------------------------------------
 //
 // GET /api/bookings/check?facility_id=...&start_at=...&end_at=...&attendees=N
@@ -358,6 +399,12 @@ exports.create = asyncHandler(async function (req, res) {
   if (!facilityId)        return fail(res, 'facility_id is required', 422);
   if (!startAt || !endAt) return fail(res, 'start_at and end_at are required (YYYY-MM-DD HH:MM:SS)', 422);
   if (startAt >= endAt)   return fail(res, 'end_at must be after start_at', 422);
+  // Reject bookings that start in the past. Compared in SQL (NOW()) so it's
+  // immune to the Node process timezone.
+  const pastCheck = await query('SELECT (? < NOW()) AS in_past', [startAt]);
+  if (Number(pastCheck[0].in_past) === 1) {
+    return fail(res, 'Start time must be in the future.', 422);
+  }
   if (b.repeat_type && !VALID_REPEAT.includes(b.repeat_type)) {
     return fail(res, 'repeat_type must be one of: ' + VALID_REPEAT.join(', '), 422);
   }
@@ -381,6 +428,10 @@ exports.create = asyncHandler(async function (req, res) {
   // Admins bypass; cancelled bookings excluded from caps.
   const advCheck = await checkAdvanceRules(facility, startAt, req.user.id, req.user.role);
   if (!advCheck.ok) return fail(res, advCheck.msg, advCheck.status);
+
+  // Booking window: must fall inside the facility's operating hours.
+  const hoursCheck = await checkOperatingHours(facilityId, startAt, endAt);
+  if (!hoursCheck.ok) return fail(res, hoursCheck.msg, 422);
 
   const guests = Array.isArray(b.guests) ? b.guests.filter(
     (g) => g && (g.email || g.fname || g.lname || g.contact_no || g.contactNo)

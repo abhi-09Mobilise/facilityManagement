@@ -348,6 +348,36 @@ function bookingEndingSoon(opts) {
   trigger('bookingEndingSoon', to, subject, html);
 }
 
+// M15 - booker confirmation on QR check-in.
+function bookingCheckedIn(opts) {
+  const { to, bookerName, facilityName, facilityType, startAt, endAt, checkedInAt } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingCheckedIn({
+    bookerName, facilityName, facilityType, startAt, endAt, checkedInAt,
+  });
+  trigger('bookingCheckedIn', to, subject, html);
+}
+
+// M15 - booker confirmation on check-out.
+function bookingCheckedOut(opts) {
+  const { to, bookerName, facilityName, facilityType, startAt, endAt, checkedOutAt } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingCheckedOut({
+    bookerName, facilityName, facilityType, startAt, endAt, checkedOutAt,
+  });
+  trigger('bookingCheckedOut', to, subject, html);
+}
+
+// M12 - booker notice when the no-show sweeper releases their seat.
+function bookingNoShowReleased(opts) {
+  const { to, bookerName, facilityName, facilityType, startAt, endAt, graceMinutes } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.bookingNoShowReleased({
+    bookerName, facilityName, facilityType, startAt, endAt, graceMinutes,
+  });
+  trigger('bookingNoShowReleased', to, subject, html);
+}
+
 module.exports = {
   sendMail,
   fireAndForget,
@@ -364,4 +394,7 @@ module.exports = {
   bookingSubmitted,
   bookingStepDecision,
   bookingEndingSoon,
+  bookingCheckedIn,
+  bookingCheckedOut,
+  bookingNoShowReleased,
 };

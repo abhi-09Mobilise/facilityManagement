@@ -332,6 +332,98 @@ exports.bookingConfirmed = function (opts) {
   };
 };
 
+// ----- check-in / check-out / no-show (M15 / M12) -------------------------
+// Small shared summary row builder for these three, matching the inline
+// tables used elsewhere in this file.
+function facTimeRows(facilityName, facilityType, startAt, endAt) {
+  return (
+    '<tr><td style="padding:6px 0;color:#6b7280;width:140px;">Facility</td>' +
+      '<td style="padding:6px 0;"><strong>' + esc(facilityName) + '</strong>' +
+      (facilityType ? ' <span style="color:#6b7280;">(' + esc(facilityType) + ')</span>' : '') +
+      '</td></tr>' +
+    '<tr><td style="padding:6px 0;color:#6b7280;">From</td>' +
+      '<td style="padding:6px 0;">' + esc(startAt) + '</td></tr>' +
+    '<tr><td style="padding:6px 0;color:#6b7280;">To</td>' +
+      '<td style="padding:6px 0;">' + esc(endAt) + '</td></tr>'
+  );
+}
+
+// Sent to the booker when they confirm arrival (QR check-in).
+exports.bookingCheckedIn = function (opts) {
+  const { bookerName, facilityName, facilityType, startAt, endAt, checkedInAt } = opts || {};
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      facTimeRows(facilityName, facilityType, startAt, endAt) +
+      (checkedInAt ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Checked in</td>' +
+          '<td style="padding:6px 0;"><strong style="color:#15803d;">' + esc(checkedInAt) + '</strong></td></tr>'
+      ) : '') +
+    '</table>';
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    '<p>You\'re <strong style="color:#15803d;">checked in</strong>. Enjoy your session!</p>' +
+    summary +
+    '<p style="color:#6b7280;font-size:13px;margin-top:18px;">' +
+      'Please remember to check out when you leave so the space can be freed for others.' +
+    '</p>';
+  return {
+    subject: 'Checked in: ' + facilityName + ' on ' + (startAt || '').slice(0, 10),
+    html: wrap(body, { title: 'Checked in' }),
+  };
+};
+
+// Sent to the booker when they check out.
+exports.bookingCheckedOut = function (opts) {
+  const { bookerName, facilityName, facilityType, startAt, endAt, checkedOutAt } = opts || {};
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      facTimeRows(facilityName, facilityType, startAt, endAt) +
+      (checkedOutAt ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Checked out</td>' +
+          '<td style="padding:6px 0;"><strong>' + esc(checkedOutAt) + '</strong></td></tr>'
+      ) : '') +
+    '</table>';
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    '<p>You\'re <strong>checked out</strong>. Thanks for freeing up the space.</p>' +
+    summary;
+  return {
+    subject: 'Checked out: ' + facilityName + ' on ' + (startAt || '').slice(0, 10),
+    html: wrap(body, { title: 'Checked out' }),
+  };
+};
+
+// Sent to the booker when the no-show sweeper releases their seat.
+exports.bookingNoShowReleased = function (opts) {
+  const { bookerName, facilityName, facilityType, startAt, endAt, graceMinutes } = opts || {};
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" ' +
+      'style="width:100%;margin:14px 0;border-collapse:collapse;font-size:14px;">' +
+      facTimeRows(facilityName, facilityType, startAt, endAt) +
+    '</table>';
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    '<p>Your booking was <strong style="color:#b45309;">released</strong> because no check-in was ' +
+      'recorded within ' + esc(graceMinutes || 'the') + ' minute(s) of the start time, and the ' +
+      'seat has been freed for others.</p>' +
+    summary +
+    '<p style="color:#6b7280;font-size:13px;margin-top:18px;">' +
+      'If you still need the space, please make a new booking.' +
+    '</p>';
+  return {
+    subject: 'Booking released (no-show): ' + facilityName + ' on ' + (startAt || '').slice(0, 10),
+    html: wrap(body, { title: 'Booking released' }),
+  };
+};
+
 // ----- bookingSubmitted ---------------------------------------------------
 // Sent to the booker on POST /api/bookings when the booking enters the
 // approval chain (status='pending'). Tells them their booking is in the

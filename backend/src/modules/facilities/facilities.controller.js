@@ -100,7 +100,7 @@ exports.list = asyncHandler(async function (req, res) {
     'SELECT f.id, f.tenant_id, f.site_id, s.organisation_id, f.floor_id, f.name, f.type, f.capacity, f.offline_capacity, ' +
     '       f.min_advance_minutes, f.max_advance_days, f.max_per_user_per_day, ' +
     '       f.max_per_user_per_week, f.max_per_user_per_month, ' +
-    '       f.pre_end_notify_minutes, ' +
+    '       f.pre_end_notify_minutes, f.grace_period_minutes, ' +
     '       f.description, f.terms_and_conditions, f.image_url, f.layout_json, f.requires_approval, f.shared_booking, ' +
     '       f.facility_approver_user_id, f.public_listed, ' +
     '       f.status, f.created_at, ' +
@@ -189,6 +189,8 @@ exports.create = asyncHandler(async function (req, res) {
   // Pre-end cleanup notification lead time (minutes before end_at).
   // NULL/0 disables the feature for the facility.
   const preEndMin    = ruleVal(b.pre_end_notify_minutes);
+  // M3 - no-show grace override (minutes). NULL = inherit org/tenant/env.
+  const graceMin     = ruleVal(b.grace_period_minutes);
 
   // M1: pre-insert layout validation (charset + duplicate ids). Canonical id
   // assignment needs the facility id, so it happens post-insert inside the txn.
@@ -207,13 +209,13 @@ exports.create = asyncHandler(async function (req, res) {
     const [r] = await conn.execute(
       'INSERT INTO `facilities` (tenant_id, site_id, floor_id, name, type, capacity, offline_capacity, ' +
       '       min_advance_minutes, max_advance_days, max_per_user_per_day, ' +
-      '       max_per_user_per_week, max_per_user_per_month, pre_end_notify_minutes, ' +
+      '       max_per_user_per_week, max_per_user_per_month, pre_end_notify_minutes, grace_period_minutes, ' +
       '       description, terms_and_conditions, image_url, layout_json, requires_approval, shared_booking, facility_approver_user_id) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         site.row.tenant_id, site.row.id, floorId,
         b.name, b.type, capVal, offlineVal,
-        minAdvMin, maxAdvDays, maxPerDay, maxPerWeek, maxPerMonth, preEndMin,
+        minAdvMin, maxAdvDays, maxPerDay, maxPerWeek, maxPerMonth, preEndMin, graceMin,
         b.description || null, b.terms_and_conditions || null, b.image_url || null,
         b.layout_json ? (typeof b.layout_json === 'string' ? b.layout_json : JSON.stringify(b.layout_json)) : null,
         b.requires_approval ? 1 : 0,
@@ -383,6 +385,7 @@ exports.update = asyncHandler(async function (req, res) {
   const fWeek  = ruleField('max_per_user_per_week');
   const fMonth = ruleField('max_per_user_per_month');
   const fPre   = ruleField('pre_end_notify_minutes');
+  const fGrace = ruleField('grace_period_minutes');
 
   await execute(
     'UPDATE `facilities` SET ' +
@@ -397,6 +400,7 @@ exports.update = asyncHandler(async function (req, res) {
     '  max_per_user_per_week      = ' + (fWeek.present  ? '?' : 'max_per_user_per_week')  + ', ' +
     '  max_per_user_per_month     = ' + (fMonth.present ? '?' : 'max_per_user_per_month') + ', ' +
     '  pre_end_notify_minutes     = ' + (fPre.present   ? '?' : 'pre_end_notify_minutes')   + ', ' +
+    '  grace_period_minutes       = ' + (fGrace.present ? '?' : 'grace_period_minutes')    + ', ' +
     '  description                = COALESCE(?, description), ' +
     '  terms_and_conditions       = COALESCE(?, terms_and_conditions), ' +
     '  image_url                  = COALESCE(?, image_url), ' +
@@ -415,6 +419,7 @@ exports.update = asyncHandler(async function (req, res) {
       ...(fWeek.present  ? [fWeek.value]  : []),
       ...(fMonth.present ? [fMonth.value] : []),
       ...(fPre.present   ? [fPre.value]   : []),
+      ...(fGrace.present ? [fGrace.value] : []),
       b.description || null, b.terms_and_conditions || null, b.image_url || null,
       ...(hasLayout ? [layoutVal] : []),
       intOrNull(b.requires_approval), sharedVal,

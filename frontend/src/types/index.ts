@@ -227,6 +227,9 @@ export interface Facility {
   // Minutes BEFORE end_at to fire a cleanup-notification email to the
   // facility's 'cleanup' chain. NULL/0 disables the feature.
   pre_end_notify_minutes?: number | null;
+  // M3 - per-facility no-show grace override (minutes). NULL = inherit the
+  // org -> tenant -> system default.
+  grace_period_minutes?: number | null;
   description?: string;
   // Free-form T&Cs shown to the booker before they confirm. Empty = no
   // acceptance step.

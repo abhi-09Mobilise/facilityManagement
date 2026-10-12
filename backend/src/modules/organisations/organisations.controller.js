@@ -293,17 +293,25 @@ exports.update = asyncHandler(async function (req, res) {
     ? (b.logo_url ? String(b.logo_url).trim() : null)
     : null;
 
+  // M3 - org-level no-show grace override. Present-aware (null clears to inherit).
+  const gracePresent = Object.prototype.hasOwnProperty.call(b, 'grace_period_minutes');
+  const graceVal = gracePresent
+    ? (() => { const n = intOrNull(b.grace_period_minutes); return (n === null || n < 0) ? null : n; })()
+    : null;
+
   await execute(
     'UPDATE `organisations` SET ' +
     '  name     = COALESCE(?, name), ' +
     '  slug     = COALESCE(?, slug), ' +
     '  logo_url = ' + (logoPatched ? '?' : 'logo_url') + ', ' +
+    '  grace_period_minutes = ' + (gracePresent ? '?' : 'grace_period_minutes') + ', ' +
     '  status   = COALESCE(?, status) ' +
     'WHERE id = ?',
     [
       b.name ? String(b.name).trim() : null,
       newSlug,
       ...(logoPatched ? [logoValue] : []),
+      ...(gracePresent ? [graceVal] : []),
       intOrNull(b.status),
       id,
     ]

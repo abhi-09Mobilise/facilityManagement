@@ -32,6 +32,8 @@
 
 const { query, execute } = require('../db/pool');
 const config = require('../config');
+const mailer = require('../utils/mailer');
+const graceConfig = require('../utils/graceConfig'); // M3 per-scope grace
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 let timer = null;
@@ -53,15 +55,24 @@ async function sweepOnce() {
   // Window math in SQL (NOW() vs start_at/end_at) so it's immune to the Node
   // process timezone — same reasoning as checkinWindow.js. g is a trusted
   // integer from config, safe to inline.
+  // Grace resolved per-scope (facility -> org -> tenant -> env) via graceConfig,
+  // so the no-show cutoff matches the check-in "too late" boundary exactly.
+  const graceExpr = graceConfig.graceSqlExpr();
   const candidates = await query(
-    "SELECT id, facility_id, start_at, end_at " +
-    "  FROM `bookings` " +
-    " WHERE status = 'approved' " +
-    "   AND checked_in_at IS NULL " +
-    "   AND trash = 0 " +
-    "   AND NOW() > start_at + INTERVAL " + g + " MINUTE " +
-    "   AND NOW() < end_at " +
-    " ORDER BY start_at ASC LIMIT 200"
+    "SELECT b.id, b.facility_id, b.start_at, b.end_at, " +
+    "       f.name AS facility_name, f.type AS facility_type, " +
+    "       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname, " +
+    "       " + graceExpr + " AS grace_min " +
+    "  FROM `bookings`   b " +
+    "  INNER JOIN `facilities` f ON f.id = b.facility_id " +
+    "  INNER JOIN `users`      u ON u.id = b.user_id " +
+    graceConfig.graceJoins() +
+    " WHERE b.status = 'approved' " +
+    "   AND b.checked_in_at IS NULL " +
+    "   AND b.trash = 0 " +
+    "   AND NOW() > b.start_at + INTERVAL (" + graceExpr + ") MINUTE " +
+    "   AND NOW() < b.end_at " +
+    " ORDER BY b.start_at ASC LIMIT 200"
   );
   if (candidates.length === 0) return { mode: m, grace_min: g, candidates: 0, released: 0 };
 
@@ -91,6 +102,18 @@ async function sweepOnce() {
           `[noShowSweeper] released no-show booking #${c.id} ` +
           `facility=${c.facility_id} start=${c.start_at}`
         );
+        // M12 - notify the booker their seat was freed. Fire-and-forget.
+        if (c.booker_email) {
+          mailer.bookingNoShowReleased({
+            to: c.booker_email,
+            bookerName: [c.booker_name, c.booker_lname].filter(Boolean).join(' ') || null,
+            facilityName: c.facility_name,
+            facilityType: c.facility_type,
+            startAt: c.start_at,
+            endAt: c.end_at,
+            graceMinutes: c.grace_min,   // resolved per-scope
+          });
+        }
       }
     } catch (err) {
       console.error('[noShowSweeper] booking #' + c.id + ' failed:', err && err.message);

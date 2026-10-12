@@ -38,8 +38,9 @@ router.get('/t/:slug/sites',                                 ctrl.sites);
 router.get('/t/:slug/sites/:siteId/facilities',              ctrl.siteFacilities);
 router.get('/t/:slug/facilities/:id',                        ctrl.facility);
 
-// M15 - QR arrival check-in. Public (code is the proof); the rate limiter
-// above makes guessing the ~1e12 code space useless.
+// M15 - QR arrival check-in / check-out. Public (code is the proof); the rate
+// limiter above makes guessing the ~1e12 code space useless.
 router.post('/checkin',                                      ctrl.checkin);
+router.post('/checkout',                                     ctrl.checkout);
 
 module.exports = router;
