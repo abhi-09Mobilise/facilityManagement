@@ -259,8 +259,8 @@ function AppLayoutInner() {
             'flex items-center gap-2.5 py-2 text-[13.5px] font-medium rounded-[9px] transition-colors min-w-0',
             opts.indent ? 'pl-9 pr-2.5' : 'px-2.5',
             isActive
-              ? 'bg-indigo-soft text-indigo-ink [&_svg]:text-indigo'
-              : 'text-inktext hover:bg-paper [&_svg]:text-mutedx'
+              ? 'bg-emerald-900/70 text-white font-semibold border border-emerald-700/40 [&_svg]:text-emerald-300'
+              : 'text-emerald-100/80 hover:bg-emerald-900/50 hover:text-white border border-transparent [&_svg]:text-emerald-200/60'
           )}
         >
           <span className="shrink-0">{n.icon}</span>
@@ -274,17 +274,17 @@ function AppLayoutInner() {
   const railHeader = (
     <>
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <div className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] bg-ink text-white">
+        <div className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950">
           <Building2 className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <div className="truncate font-display text-[15px] font-bold tracking-tight" title={brandTitle}>
+          <div className="truncate font-display text-[15px] font-bold tracking-tight text-white" title={brandTitle}>
             {brandTitle}
           </div>
-          <div className="text-[11px] font-medium text-mutedx">Workplace booking</div>
+          <div className="text-[11px] font-medium text-emerald-100/60">Workplace booking</div>
         </div>
       </div>
-      <div className="mx-3 mb-2 flex items-center gap-2.5 rounded-xl border border-line bg-[#FAFBFD] px-3 py-2.5">
+      <div className="mx-3 mb-2 flex items-center gap-2.5 rounded-xl border border-emerald-800/50 bg-emerald-950/40 px-3 py-2.5">
         <div
           className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full font-display text-xs font-semibold text-white"
           style={{ backgroundColor: ROLE_AVATAR_BG[user.role] }}
@@ -292,8 +292,8 @@ function AppLayoutInner() {
           {initials}
         </div>
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold">{user.name || user.username}</div>
-          <div className="truncate text-[11.5px] text-mutedx">{ROLE_LABEL[user.role]}</div>
+          <div className="truncate text-[13px] font-semibold text-white">{user.name || user.username}</div>
+          <div className="truncate text-[11.5px] text-emerald-100/60">{ROLE_LABEL[user.role]}</div>
         </div>
       </div>
     </>
@@ -312,8 +312,8 @@ function AppLayoutInner() {
                 onClick={() => setMastersOpen((v) => !v)}
                 className={cn(
                   'w-full flex items-center gap-2.5 px-2.5 py-2 text-[13.5px] font-medium rounded-[9px] transition-colors',
-                  'text-inktext hover:bg-paper [&_svg]:text-mutedx',
-                  expanded && 'font-semibold'
+                  'text-emerald-100/80 hover:bg-emerald-900/50 hover:text-white [&_svg]:text-emerald-200/60',
+                  expanded && 'font-semibold text-white'
                 )}
                 aria-expanded={expanded}
               >
@@ -335,7 +335,7 @@ function AppLayoutInner() {
         if (section.label) {
           return (
             <div key={section.key} className="mb-1">
-              <div className="px-2.5 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[.1em] text-faint">
+              <div className="px-2.5 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[.1em] text-emerald-200/50">
                 {section.label}
               </div>
               <ul>{section.items.map((it) => renderItem(it))}</ul>
@@ -458,7 +458,7 @@ function AppLayoutInner() {
 
       {/* ============ SIDEBAR (md+) — prototype rail: full height, brand on top ============ */}
       <aside
-        className="hidden md:flex md:flex-col fixed left-0 top-0 bottom-0 z-40 border-r border-line bg-card"
+        className="hidden md:flex md:flex-col fixed left-0 top-0 bottom-0 z-40 border-r border-emerald-900/60 bg-[#071F1A]"
         style={{ width: SIDEBAR_W }}
       >
         {railHeader}
@@ -468,8 +468,8 @@ function AppLayoutInner() {
         <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {navList}
         </div>
-        <div className="border-t border-line px-4 py-3 text-[11.5px] text-mutedx">
-          <span className="mr-1.5 inline-block h-[7px] w-[7px] rounded-full bg-teal shadow-[0_0_0_3px_#DCF3EE]" />
+        <div className="border-t border-emerald-900/60 px-4 py-3 text-[11.5px] text-emerald-100/60">
+          <span className="mr-1.5 inline-block h-[7px] w-[7px] rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.2)]" />
           All systems operational
         </div>
       </aside>
@@ -482,12 +482,12 @@ function AppLayoutInner() {
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <aside className="md:hidden fixed inset-y-0 left-0 z-50 w-[264px] max-w-[85vw] bg-card shadow-xl flex flex-col">
+          <aside className="md:hidden fixed inset-y-0 left-0 z-50 w-[264px] max-w-[85vw] bg-[#071F1A] shadow-xl flex flex-col">
             <div className="flex items-start justify-between shrink-0">
               <div className="min-w-0 flex-1">{railHeader}</div>
               <Button
                 variant="ghost" size="icon"
-                className="m-2 shrink-0"
+                className="m-2 shrink-0 text-emerald-100/70 hover:text-white hover:bg-emerald-900/50"
                 aria-label="Close menu"
                 onClick={() => setMobileOpen(false)}
               >
