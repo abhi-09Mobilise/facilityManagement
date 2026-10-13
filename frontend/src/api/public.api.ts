@@ -50,6 +50,25 @@ export interface CheckinOutcome {
   start_at?: string;
   end_at?: string;
   checked_in_at?: string;
+  checked_out_at?: string;
+}
+
+// Shared parser for /public/checkin + /public/checkout (same envelope shapes).
+function parseCheckinOutcome(data: unknown): CheckinOutcome {
+  const b: Record<string, unknown> = (data as Record<string, unknown>) || {};
+  const card = (b.data as Record<string, unknown>) || b;
+  return {
+    ok: !!b.status,
+    msg: (b.msg as string) || (b.status ? 'Done' : 'Request failed'),
+    code: b.code as string | undefined,
+    already: card.already as boolean | undefined,
+    facility_name: card.facility_name as string | undefined,
+    facility_type: card.facility_type as string | undefined,
+    start_at: card.start_at as string | undefined,
+    end_at: card.end_at as string | undefined,
+    checked_in_at: card.checked_in_at as string | undefined,
+    checked_out_at: card.checked_out_at as string | undefined,
+  };
 }
 
 export const publicApi = {
@@ -58,21 +77,11 @@ export const publicApi = {
   checkin: (code: string): Promise<CheckinOutcome> =>
     pub
       .post('/public/checkin', { code }, { validateStatus: () => true })
-      .then((r) => {
-        const b: Record<string, unknown> = r.data || {};
-        const card = (b.data as Record<string, unknown>) || b;
-        return {
-          ok: !!b.status,
-          msg: (b.msg as string) || (b.status ? 'Checked in' : 'Check-in failed'),
-          code: b.code as string | undefined,
-          already: card.already as boolean | undefined,
-          facility_name: card.facility_name as string | undefined,
-          facility_type: card.facility_type as string | undefined,
-          start_at: card.start_at as string | undefined,
-          end_at: card.end_at as string | undefined,
-          checked_in_at: card.checked_in_at as string | undefined,
-        };
-      }),
+      .then((r) => parseCheckinOutcome(r.data)),
+  checkout: (code: string): Promise<CheckinOutcome> =>
+    pub
+      .post('/public/checkout', { code }, { validateStatus: () => true })
+      .then((r) => parseCheckinOutcome(r.data)),
   landing: (slug: string) =>
     pub.get<{ status: boolean; data?: LandingPayload; msg?: string }>(`/public/t/${encodeURIComponent(slug)}`).then((r) => r.data),
   sites: (slug: string) =>

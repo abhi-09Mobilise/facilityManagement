@@ -169,6 +169,12 @@ exports.update = asyncHandler(async function (req, res) {
   const id = intOrNull(req.params.id);
   if (id === null) return fail(res, 'Invalid id', 400);
   const b = req.body || {};
+  // M3 - tenant-wide no-show grace default. Present-aware so sending null
+  // clears it (back to env default); omitting it leaves the stored value.
+  const gracePresent = Object.prototype.hasOwnProperty.call(b, 'grace_period_minutes');
+  const graceVal = gracePresent
+    ? (() => { const n = intOrNull(b.grace_period_minutes); return (n === null || n < 0) ? null : n; })()
+    : null;
   await execute(
     'UPDATE `tenants` SET ' +
     '  name          = COALESCE(?, name), ' +
@@ -178,6 +184,7 @@ exports.update = asyncHandler(async function (req, res) {
     '  timezone      = COALESCE(?, timezone), ' +
     '  locale        = COALESCE(?, locale), ' +
     '  status        = COALESCE(?, status), ' +
+    '  grace_period_minutes = ' + (gracePresent ? '?' : 'grace_period_minutes') + ', ' +
     // F03 - public portal opt-in
     '  public_portal_enabled = COALESCE(?, public_portal_enabled), ' +
     '  public_slug   = COALESCE(?, public_slug) ' +
@@ -186,6 +193,7 @@ exports.update = asyncHandler(async function (req, res) {
       b.name || null, b.contact_email || null, b.contact_phone || null,
       b.currency_code || null, b.timezone || null, b.locale || null,
       b.status || null,
+      ...(gracePresent ? [graceVal] : []),
       b.public_portal_enabled === undefined ? null : (b.public_portal_enabled ? 1 : 0),
       b.public_slug !== undefined ? (String(b.public_slug || '').trim() || null) : null,
       id,

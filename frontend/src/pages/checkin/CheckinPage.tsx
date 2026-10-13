@@ -68,6 +68,18 @@ export default function CheckinPage() {
     }
   }
 
+  async function doCheckout() {
+    setPhase('loading');
+    try {
+      const out = await publicApi.checkout(code);
+      setResult(out);
+      setPhase('done');
+    } catch {
+      setResult({ ok: false, msg: 'Network error — please try again.' });
+      setPhase('done');
+    }
+  }
+
   function reset() {
     setResult(null);
     setCode('');
@@ -77,6 +89,9 @@ export default function CheckinPage() {
 
   const ok = result?.ok;
   const isWindow = result?.code === 'CHECKIN_TOO_EARLY' || result?.code === 'CHECKIN_TOO_LATE';
+  const checkedOut = !!result?.checked_out_at;
+  // Offer check-out once they're checked in and haven't checked out yet.
+  const canCheckOut = !!(ok && result?.checked_in_at && !result?.checked_out_at);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10">
@@ -141,7 +156,11 @@ export default function CheckinPage() {
               )}
 
               <h2 className="text-xl font-bold mt-3 text-slate-800">
-                {ok ? (result.already ? "Already checked in" : "You're checked in") : 'Not checked in'}
+                {ok
+                  ? (checkedOut
+                      ? "You're checked out"
+                      : (result.already ? 'Already checked in' : "You're checked in"))
+                  : 'Not checked in'}
               </h2>
               <p className="text-sm text-slate-600 mt-1">{result.msg}</p>
 
@@ -164,12 +183,22 @@ export default function CheckinPage() {
                 </div>
               )}
 
+              {canCheckOut && (
+                <button
+                  onClick={doCheckout}
+                  className="mt-6 w-full rounded-xl bg-blue-600 text-white font-semibold
+                             text-base py-4 active:bg-blue-700 hover:bg-blue-700 transition"
+                >
+                  Check out
+                </button>
+              )}
               <button
                 onClick={reset}
-                className="mt-6 w-full rounded-xl border border-slate-300 text-slate-700
-                           font-semibold text-base py-3.5 hover:bg-slate-50 transition"
+                className={(canCheckOut ? 'mt-3' : 'mt-6') +
+                  ' w-full rounded-xl border border-slate-300 text-slate-700' +
+                  ' font-semibold text-base py-3.5 hover:bg-slate-50 transition'}
               >
-                {ok ? 'Check in another' : 'Try again'}
+                {ok ? 'Done' : 'Try again'}
               </button>
             </div>
           )}

@@ -11,6 +11,8 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { intOrNull } = require('../../utils/tenantScope');
 const checkinCode = require('../../utils/checkinCode');     // M15
 const checkinWindow = require('../../utils/checkinWindow');  // M15
+const graceConfig = require('../../utils/graceConfig');      // M3 grace resolution
+const mailer = require('../../utils/mailer');               // M15 check-in/out emails
 
 async function resolveTenant(slug) {
   const rows = await query(
@@ -143,14 +145,18 @@ exports.checkin = asyncHandler(async function (req, res) {
   }
 
   // The window (too_early / too_late) is classified by MySQL against NOW() so
-  // it's immune to the Node process timezone — see checkinWindow.js.
-  const win = checkinWindow.windowColumns('b.start_at');
+  // it's immune to the Node process timezone — see checkinWindow.js. Grace is
+  // resolved per-scope (facility -> org -> tenant -> env) via graceConfig.
+  const win = checkinWindow.windowColumns('b.start_at', graceConfig.graceSqlExpr());
   const rows = await query(
-    'SELECT b.id, b.status, b.start_at, b.end_at, b.checked_in_at, ' +
+    'SELECT b.id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
     '       f.name AS facility_name, f.type AS facility_type, ' +
+    '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname, ' +
     '       ' + win.columns + ' ' +
     '  FROM `bookings`   b ' +
     '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    '  INNER JOIN `users`      u ON u.id = b.user_id ' +
+    graceConfig.graceJoins() +
     ' WHERE b.checkin_code = ? AND b.trash = 0 LIMIT 1',
     [code]
   );
@@ -175,9 +181,10 @@ exports.checkin = asyncHandler(async function (req, res) {
     end_at: b.end_at,
   };
 
-  // Already here — idempotent success, no second write.
+  // Already here — idempotent success, no second write. Surface checked_out_at
+  // so the page can offer a "Check out" action.
   if (b.checked_in_at) {
-    return ok(res, { ...card, checked_in_at: b.checked_in_at, already: true },
+    return ok(res, { ...card, checked_in_at: b.checked_in_at, checked_out_at: b.checked_out_at, already: true },
       "You're already checked in.");
   }
 
@@ -210,11 +217,99 @@ exports.checkin = asyncHandler(async function (req, res) {
   );
   if (result.affectedRows === 0) {
     // Someone (or a double-tap) checked in a split second before us.
-    const again = await query('SELECT checked_in_at FROM `bookings` WHERE id = ? LIMIT 1', [b.id]);
-    return ok(res, { ...card, checked_in_at: again[0] && again[0].checked_in_at, already: true },
+    const again = await query('SELECT checked_in_at, checked_out_at FROM `bookings` WHERE id = ? LIMIT 1', [b.id]);
+    return ok(res, { ...card, checked_in_at: again[0] && again[0].checked_in_at, checked_out_at: again[0] && again[0].checked_out_at, already: true },
       "You're already checked in.");
   }
   const fresh = await query('SELECT checked_in_at FROM `bookings` WHERE id = ? LIMIT 1', [b.id]);
-  return ok(res, { ...card, checked_in_at: fresh[0] && fresh[0].checked_in_at, already: false },
+  const checkedInAt = fresh[0] && fresh[0].checked_in_at;
+
+  // M15 - fire-and-forget confirmation to the booker. Never blocks the response
+  // and never exposes the booker's address to the caller.
+  if (b.booker_email) {
+    mailer.bookingCheckedIn({
+      to: b.booker_email,
+      bookerName: [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null,
+      facilityName: b.facility_name,
+      facilityType: b.facility_type,
+      startAt: b.start_at,
+      endAt: b.end_at,
+      checkedInAt,
+    });
+  }
+
+  return ok(res, { ...card, checked_in_at: checkedInAt, already: false },
     "You're checked in. Have a great session!");
+});
+
+// ----- M15 QR check-out ---------------------------------------------------
+// POST /public/checkout   body: { code }
+//
+// Same public, code-is-the-proof model as check-in. Allowed any time once the
+// booking is checked in (no window), until checked out. Idempotent.
+exports.checkout = asyncHandler(async function (req, res) {
+  const code = checkinCode.normalize((req.body || {}).code);
+  if (!code) {
+    return fail(res, 'Enter the check-in code from your confirmation email.', 400,
+      { code: 'CHECKIN_CODE_INVALID' });
+  }
+
+  const rows = await query(
+    'SELECT b.id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
+    '       f.name AS facility_name, f.type AS facility_type, ' +
+    '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname ' +
+    '  FROM `bookings`   b ' +
+    '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    '  INNER JOIN `users`      u ON u.id = b.user_id ' +
+    ' WHERE b.checkin_code = ? AND b.trash = 0 LIMIT 1',
+    [code]
+  );
+  if (rows.length === 0) {
+    return fail(res, "We couldn't find that code. Check your confirmation email and try again.",
+      404, { code: 'CHECKIN_CODE_UNKNOWN' });
+  }
+  const b = rows[0];
+  const card = {
+    facility_name: b.facility_name,
+    facility_type: b.facility_type,
+    start_at: b.start_at,
+    end_at: b.end_at,
+  };
+
+  if (!b.checked_in_at) {
+    return fail(res, "You haven't checked in yet, so there's nothing to check out of.",
+      422, { code: 'CHECKOUT_NOT_CHECKED_IN', ...card });
+  }
+  if (b.checked_out_at) {
+    return ok(res, { ...card, checked_in_at: b.checked_in_at, checked_out_at: b.checked_out_at, already: true },
+      "You're already checked out.");
+  }
+
+  const result = await execute(
+    'UPDATE `bookings` SET checked_out_at = NOW() ' +
+    ' WHERE id = ? AND checked_in_at IS NOT NULL AND checked_out_at IS NULL',
+    [b.id]
+  );
+  if (result.affectedRows === 0) {
+    const again = await query('SELECT checked_out_at FROM `bookings` WHERE id = ? LIMIT 1', [b.id]);
+    return ok(res, { ...card, checked_in_at: b.checked_in_at, checked_out_at: again[0] && again[0].checked_out_at, already: true },
+      "You're already checked out.");
+  }
+  const fresh = await query('SELECT checked_out_at FROM `bookings` WHERE id = ? LIMIT 1', [b.id]);
+  const checkedOutAt = fresh[0] && fresh[0].checked_out_at;
+
+  if (b.booker_email) {
+    mailer.bookingCheckedOut({
+      to: b.booker_email,
+      bookerName: [b.booker_name, b.booker_lname].filter(Boolean).join(' ') || null,
+      facilityName: b.facility_name,
+      facilityType: b.facility_type,
+      startAt: b.start_at,
+      endAt: b.end_at,
+      checkedOutAt,
+    });
+  }
+
+  return ok(res, { ...card, checked_in_at: b.checked_in_at, checked_out_at: checkedOutAt, already: false },
+    "You're checked out. Thanks!");
 });

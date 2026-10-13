@@ -31,22 +31,25 @@ function mins(v, dflt) {
 
 /**
  * Build the SELECT columns that classify the window for a booking row, plus a
- * NOW() echo for debugging. Inline the (trusted, integer) minute values so the
- * caller's param list stays just its own params.
+ * NOW() echo for debugging. Inline the (trusted, integer) opensMin; grace is
+ * passed as a SQL expression so callers can resolve the per-scope grace
+ * (facility -> org -> tenant -> env) via graceConfig — see graceConfig.js.
  *
  * @param {string} startExpr  SQL expression for the booking start (e.g. 'b.start_at')
+ * @param {string} [graceExpr] SQL expression yielding grace minutes; defaults
+ *                             to the flat env value when not supplied.
  * @returns {{ columns: string }}
  */
-function windowColumns(startExpr = 'b.start_at') {
+function windowColumns(startExpr = 'b.start_at', graceExpr) {
   const o = mins(config.checkin && config.checkin.opensMin, 15);
-  const g = mins(config.checkin && config.checkin.graceMin, 30);
+  const g = graceExpr || String(mins(config.checkin && config.checkin.graceMin, 30));
   return {
     columns:
       `NOW() AS server_now, ` +
       `DATE_FORMAT(${startExpr} - INTERVAL ${o} MINUTE, '%H:%i') AS opens_at, ` +
-      `DATE_FORMAT(${startExpr} + INTERVAL ${g} MINUTE, '%H:%i') AS closes_at, ` +
+      `DATE_FORMAT(${startExpr} + INTERVAL (${g}) MINUTE, '%H:%i') AS closes_at, ` +
       `(NOW() < ${startExpr} - INTERVAL ${o} MINUTE) AS too_early, ` +
-      `(NOW() > ${startExpr} + INTERVAL ${g} MINUTE) AS too_late`,
+      `(NOW() > ${startExpr} + INTERVAL (${g}) MINUTE) AS too_late`,
   };
 }
 

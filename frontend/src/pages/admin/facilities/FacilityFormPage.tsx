@@ -541,6 +541,23 @@ export default function FacilityFormPage() {
                   `Online (bookable): ${Math.max(0, (form.capacity || 0) - (form.offline_capacity || 0))}`
                 }
               />
+              {/* M3 - no-show grace override (minutes). Blank = inherit the
+                  org / tenant / system default. */}
+              <TextField
+                type="number"
+                label="No-show grace (min)"
+                sx={{ width: 200 }}
+                value={form.grace_period_minutes ?? ''}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setForm({
+                    ...form,
+                    grace_period_minutes: raw === '' ? null : Math.max(0, Number(raw)),
+                  });
+                }}
+                inputProps={{ min: 0 }}
+                helperText="Blank = inherit org/tenant default"
+              />
             </Stack>
             <TextField label="Description" multiline minRows={2} fullWidth value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 
