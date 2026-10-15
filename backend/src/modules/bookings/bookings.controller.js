@@ -494,11 +494,18 @@ exports.create = asyncHandler(async function (req, res) {
   let txResult;
   try {
     txResult = await withTransaction(async function (conn) {
+      // Channel: tag the booking with which surface created it so the
+      // SpaceDesk "Booking channel" dashboard tile can aggregate by source.
+      // Default = 'portal' (this endpoint IS the web portal). Future mobile
+      // / tablet / QR-walk-in endpoints should pass their own channel value.
+      const VALID_CHANNELS = ['portal', 'app', 'qr', 'tablet'];
+      const bookingChannel = VALID_CHANNELS.includes(b.channel) ? b.channel : 'portal';
+
       const [r] = await conn.execute(
         'INSERT INTO `bookings` ' +
         '   (tenant_id, facility_id, desk_id, user_id, department_id, title, start_at, end_at, ' +
-        '    repeat_type, status, checkin_code, remarks, dont_disturb, attendee_count) ' +
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+        '    repeat_type, status, channel, checkin_code, remarks, dont_disturb, attendee_count) ' +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         [
           booker.tenant_id, facilityId,
           // F09 - optional desk id (string from facility.layout_json.desks[].id)
@@ -506,6 +513,7 @@ exports.create = asyncHandler(async function (req, res) {
           booker.id, departmentId,
           titleStr, startAt, endAt,
           b.repeat_type || 'none',
+          bookingChannel,
           checkinCodeValue,
           b.remarks || null,
           b.dont_disturb ? 1 : 0,

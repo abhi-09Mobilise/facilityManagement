@@ -18,10 +18,12 @@
 
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
-import { ThemeProvider } from '@mui/material/styles';
+import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import theme from '@/theme/theme';
+import { useMemo } from 'react';
+import { createAppTheme } from '@/theme/theme';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/ThemeContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { RequireRole } from '@/components/RoleGate';
 import AppLayout from '@/layouts/AppLayout';
@@ -40,6 +42,7 @@ const PublicLandingPage         = lazy(() => import('@/pages/public/PublicLandin
 const PublicSitesPage           = lazy(() => import('@/pages/public/PublicSitesPage'));
 const PublicSiteFacilitiesPage  = lazy(() => import('@/pages/public/PublicSiteFacilitiesPage'));
 const PublicFacilityDetailPage  = lazy(() => import('@/pages/public/PublicFacilityDetailPage'));
+const PublicRatePage            = lazy(() => import('@/pages/public/PublicRatePage'));
 
 // --- Lazy: M15 QR arrival check-in (public, no login) -------------------
 const CheckinPage               = lazy(() => import('@/pages/checkin/CheckinPage'));
@@ -113,9 +116,10 @@ function RoleHomeRedirect() {
 
 export default function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <AuthProvider>
+    <AppThemeProvider>
+      <MuiThemeBridge>
+        <CssBaseline />
+        <AuthProvider>
         {/* Suspense here catches lazy chunks for PUBLIC pages (login, register,
             portal). The AUTHENTICATED tree has its OWN inner Suspense scoped
             to just <Outlet /> inside AppLayout — that way, navigating between
@@ -137,6 +141,7 @@ export default function App() {
             <Route path="/p/:slug/sites"                            element={<PublicSitesPage />} />
             <Route path="/p/:slug/sites/:siteId/facilities"         element={<PublicSiteFacilitiesPage />} />
             <Route path="/p/:slug/facilities/:id"                   element={<PublicFacilityDetailPage />} />
+            <Route path="/rate/:token"                              element={<PublicRatePage />} />
 
             {/*
               Layout route: <ProtectedRoute> checks auth, <AppLayout /> renders
@@ -264,7 +269,16 @@ export default function App() {
             </Route>
           </Routes>
         </Suspense>
-      </AuthProvider>
-    </ThemeProvider>
+        </AuthProvider>
+      </MuiThemeBridge>
+    </AppThemeProvider>
   );
+}
+
+// Bridges the app's ThemeContext → MUI's ThemeProvider so MuiPaper/MuiDataGrid/
+// MuiDialog pick up the new palette the instant the toggle flips.
+function MuiThemeBridge({ children }: { children: React.ReactNode }) {
+  const { mode } = useThemeMode();
+  const muiTheme = useMemo(() => createAppTheme(mode), [mode]);
+  return <MuiThemeProvider theme={muiTheme}>{children}</MuiThemeProvider>;
 }

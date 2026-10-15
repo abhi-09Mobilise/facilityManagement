@@ -378,6 +378,17 @@ function bookingNoShowReleased(opts) {
   trigger('bookingNoShowReleased', to, subject, html);
 }
 
+// Rating request sent by the feedbackMailer cron after a booking completes.
+// `ratingUrl` is a /rate/:token link signed by utils/ratingToken.js.
+function feedbackRequest(opts) {
+  const { to, bookerName, facilityName, facilityType, siteName, startAt, endAt, ratingUrl } = opts || {};
+  if (!to) return;
+  const { subject, html } = templates.feedbackRequest({
+    bookerName, facilityName, facilityType, siteName, startAt, endAt, ratingUrl,
+  });
+  trigger('feedbackRequest', to, subject, html);
+}
+
 module.exports = {
   sendMail,
   fireAndForget,
@@ -397,4 +408,5 @@ module.exports = {
   bookingCheckedIn,
   bookingCheckedOut,
   bookingNoShowReleased,
+  feedbackRequest,
 };

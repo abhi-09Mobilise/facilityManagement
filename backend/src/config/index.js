@@ -1,5 +1,22 @@
 require('dotenv').config();
 
+// Parse "6:7,12:3" → Map { 6 → 7, 12 → 3 }. Silently ignores malformed entries
+// so a typo in one pair doesn't nuke the whole config.
+function parseTenantMap(raw) {
+  const out = new Map();
+  for (const part of String(raw).split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const [a, b] = trimmed.split(':').map(function (s) { return s.trim(); });
+    const fmTid = Number(a);
+    const pcId = Number(b);
+    if (Number.isFinite(fmTid) && fmTid > 0 && Number.isFinite(pcId) && pcId > 0) {
+      out.set(fmTid, pcId);
+    }
+  }
+  return out;
+}
+
 const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -25,6 +42,21 @@ const config = {
   checkin: {
     opensMin: parseInt(process.env.CHECKIN_OPENS_MIN || '15', 10), // how early you can check in
     graceMin: parseInt(process.env.CHECKIN_GRACE_MIN || '30', 10), // how late before it's a no-show
+  },
+  // Embassy pantry bridge (separate Node service that aggregates pantry
+  // data from the external IFMS/Embassy MySQL). Only tenants listed in the
+  // mapping proxy to the bridge; all others keep using FM's own pantry
+  // tables. See embassy-pantry-bridge/README.md.
+  //
+  // EMBASSY_TENANT_MAP format: "<fm_tenant_id>:<embassy_pc_id>,..."
+  //   e.g. "6:7"  →  FM tenant 6 is served by Embassy pc_id 7.
+  //   e.g. "6:7,12:3"  →  two tenants mapped.
+  // Empty / unset → bridge disabled, no tenant uses it.
+  bridge: {
+    pantryUrl:      process.env.PANTRY_BRIDGE_URL      || '',
+    pantrySecret:   process.env.PANTRY_BRIDGE_SECRET   || '',
+    pantryTimeoutMs: parseInt(process.env.PANTRY_BRIDGE_TIMEOUT_MS || '6000', 10),
+    tenantMap:      parseTenantMap(process.env.EMBASSY_TENANT_MAP || ''),
   },
   mail: {
     host: process.env.SMTP_HOST || '',

@@ -444,6 +444,10 @@ export interface CreateBookingPayload {
   // String form matches layout_json.objects[].id (e.g. "C-03"). Backend
   // race-checks the same window for collisions.
   desk_id?: string;
+  // Which surface created this booking. Backend validates against the enum
+  // ('portal' | 'app' | 'qr' | 'tablet') and defaults to 'portal' when the
+  // field is absent, so passing it from the QR-walk-in flow is optional.
+  channel?: 'portal' | 'app' | 'qr' | 'tablet';
 }
 
 // Approval inbox row (joined view from GET /approvals/inbox)

@@ -2,30 +2,91 @@
 // Shows live clock, site filter dropdown, range toggle (7/30/90 days), and
 // right-side circular occupancy gauge + 3-line status breakdown.
 
-import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { getHeroOverview, SAMPLE_DATA_BANNER } from '../sampleData';
+import { useEffect, useRef, useState } from 'react';
+import { Building2, Check, ChevronDown, Globe } from 'lucide-react';
+import { getHeroOverview, SAMPLE_DATA_BANNER, type HeroOverview as HeroOverviewData } from '../sampleData';
+import type { Site } from '@/types';
 
-export function HeroOverview() {
-  const data = getHeroOverview();
-  const [range, setRange] = useState<7 | 30 | 90>(data.rangeDays);
+type RangeDays = 7 | 30 | 90;
+
+interface Props {
+  // Fields fetched from the real backend. Any field present here wins
+  // over the mock value from sampleData.ts; everything else keeps the
+  // sample fallback so the widget never renders half-empty.
+  liveOverlay?: Partial<HeroOverviewData>;
+  // True when at least one real field was supplied — used to drop the
+  // "SAMPLE DATA" badge once we're on live data.
+  isLive?: boolean;
+  // Site dropdown — populated from sitesApi.list() in the parent page.
+  sites?: Site[];
+  selectedSiteId?: number | null;
+  onSiteChange?: (siteId: number | null) => void;
+  // Range toggle — controlled by the parent so the hook knows what to
+  // request from gantt().
+  rangeDays?: RangeDays;
+  onRangeChange?: (days: RangeDays) => void;
+}
+
+export function HeroOverview({
+  liveOverlay,
+  isLive,
+  sites = [],
+  selectedSiteId = null,
+  onSiteChange,
+  rangeDays,
+  onRangeChange,
+}: Props = {}) {
+  const data = getHeroOverview(liveOverlay);
+  // Local fallback when the parent isn't controlling the range.
+  const [localRange, setLocalRange] = useState<RangeDays>(rangeDays ?? data.rangeDays);
+  const range: RangeDays = rangeDays ?? localRange;
+
   const [siteOpen, setSiteOpen] = useState(false);
+  const siteWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Close dropdown on outside click.
+  useEffect(() => {
+    if (!siteOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!siteWrapRef.current) return;
+      if (!siteWrapRef.current.contains(e.target as Node)) setSiteOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [siteOpen]);
 
   // Circular gauge calculation.
   const R = 68;
   const CIRC = 2 * Math.PI * R;
   const dash = (data.occupiedPercent / 100) * CIRC;
 
+  const selectedSite = sites.find((s) => s.id === selectedSiteId) || null;
+  const siteLabel = selectedSite ? selectedSite.name : (data.siteFilter || 'All sites');
+
+  function handleRangePick(n: RangeDays) {
+    if (onRangeChange) onRangeChange(n);
+    else setLocalRange(n);
+  }
+
+  function handleSitePick(id: number | null) {
+    if (onSiteChange) onSiteChange(id);
+    setSiteOpen(false);
+  }
+
   return (
-    <div className="relative overflow-hidden rounded-2xl p-6 md:p-8 bg-gradient-to-br from-emerald-900 via-teal-800 to-emerald-700 text-white shadow-lg">
-      {/* subtle grid pattern */}
-      <div
-        className="absolute inset-0 opacity-[0.08] pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(white 1px, transparent 1px), linear-gradient(90deg, white 1px, transparent 1px)',
-          backgroundSize: '32px 32px',
-        }}
-      />
+    <div className="relative rounded-2xl p-6 md:p-8 bg-gradient-to-br from-emerald-900 via-teal-800 to-emerald-700 dark:from-emerald-950 dark:via-teal-900 dark:to-emerald-900 text-white shadow-lg">
+      {/* subtle grid pattern — wrapped in its own overflow-hidden layer
+          so the hero itself doesn't clip the site dropdown when it opens
+          beyond the hero's rounded corners. */}
+      <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+        <div
+          className="absolute inset-0 opacity-[0.08]"
+          style={{
+            backgroundImage: 'linear-gradient(white 1px, transparent 1px), linear-gradient(90deg, white 1px, transparent 1px)',
+            backgroundSize: '32px 32px',
+          }}
+        />
+      </div>
 
       <div className="relative flex flex-col lg:flex-row gap-6 lg:gap-10 lg:items-center justify-between">
         {/* Left: title + filters */}
@@ -36,9 +97,15 @@ export function HeroOverview() {
               Live
             </span>
             <span className="text-emerald-100/80">{data.nowLabel}</span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-100 border border-amber-300/30 text-[10px] font-semibold tracking-wide">
-              {SAMPLE_DATA_BANNER}
-            </span>
+            {isLive ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-400/20 text-emerald-100 border border-emerald-300/30 text-[10px] font-semibold tracking-wide">
+                LIVE DATA
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-100 border border-amber-300/30 text-[10px] font-semibold tracking-wide">
+                {SAMPLE_DATA_BANNER}
+              </span>
+            )}
           </div>
 
           <h1 className="mt-3 text-3xl md:text-4xl font-bold tracking-tight">
@@ -49,15 +116,54 @@ export function HeroOverview() {
           </p>
 
           <div className="mt-5 flex items-center gap-3 flex-wrap">
-            {/* Site filter — purely visual placeholder */}
-            <button
-              type="button"
-              onClick={() => setSiteOpen((v) => !v)}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm backdrop-blur-sm border border-white/10"
-            >
-              {data.siteFilter}
-              <ChevronDown className="h-4 w-4 opacity-70" />
-            </button>
+            {/* Site filter — populated from sitesApi.list() */}
+            <div ref={siteWrapRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setSiteOpen((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={siteOpen}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm backdrop-blur-sm border border-white/10"
+              >
+                {siteLabel}
+                <ChevronDown className={'h-4 w-4 opacity-70 transition-transform ' + (siteOpen ? 'rotate-180' : '')} />
+              </button>
+              {siteOpen && (
+                <div
+                  role="listbox"
+                  className="absolute left-0 top-full mt-2 w-64 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl z-50 overflow-hidden"
+                >
+                  <div className="px-3 pt-2.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Filter by site
+                  </div>
+                  <ul className="max-h-64 overflow-y-auto py-1 text-sm text-slate-700 dark:text-slate-300 [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
+                    <SiteOption
+                      icon={<Globe className="h-4 w-4" />}
+                      label="All sites"
+                      selected={selectedSiteId === null}
+                      onClick={() => handleSitePick(null)}
+                    />
+                    {sites.length > 0 && (
+                      <li className="my-1 mx-3 border-t border-slate-100 dark:border-slate-700" aria-hidden />
+                    )}
+                    {sites.map((s) => (
+                      <SiteOption
+                        key={s.id}
+                        icon={<Building2 className="h-4 w-4" />}
+                        label={s.name}
+                        selected={selectedSiteId === s.id}
+                        onClick={() => handleSitePick(s.id)}
+                      />
+                    ))}
+                    {sites.length === 0 && (
+                      <li className="px-3 py-3 text-slate-400 dark:text-slate-500 text-xs italic text-center">
+                        No sites available
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
 
             {/* Range toggle */}
             <div className="inline-flex rounded-lg bg-white/10 p-1 text-sm border border-white/10">
@@ -65,7 +171,7 @@ export function HeroOverview() {
                 <button
                   key={n}
                   type="button"
-                  onClick={() => setRange(n as 7 | 30 | 90)}
+                  onClick={() => handleRangePick(n as RangeDays)}
                   className={
                     'px-3 py-1 rounded-md transition-colors ' +
                     (range === n ? 'bg-white text-emerald-900 font-semibold' : 'text-emerald-100 hover:bg-white/10')
@@ -105,6 +211,36 @@ export function HeroOverview() {
         </div>
       </div>
     </div>
+  );
+}
+
+function SiteOption({
+  icon, label, selected, onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        role="option"
+        aria-selected={selected}
+        onClick={onClick}
+        className={
+          'w-full flex items-center gap-2.5 px-3 py-2 transition-colors text-left ' +
+          (selected
+            ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 font-semibold'
+            : 'hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-300')
+        }
+      >
+        <span className={selected ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-400 dark:text-slate-500'}>{icon}</span>
+        <span className="flex-1 truncate">{label}</span>
+        {selected && <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-300 shrink-0" />}
+      </button>
+    </li>
   );
 }
 

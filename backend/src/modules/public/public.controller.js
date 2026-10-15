@@ -13,6 +13,7 @@ const checkinCode = require('../../utils/checkinCode');     // M15
 const checkinWindow = require('../../utils/checkinWindow');  // M15
 const graceConfig = require('../../utils/graceConfig');      // M3 grace resolution
 const mailer = require('../../utils/mailer');               // M15 check-in/out emails
+const ratingToken = require('../../utils/ratingToken');     // email-driven feedback
 
 async function resolveTenant(slug) {
   const rows = await query(
@@ -313,3 +314,109 @@ exports.checkout = asyncHandler(async function (req, res) {
   return ok(res, { ...card, checked_in_at: b.checked_in_at, checked_out_at: checkedOutAt, already: false },
     "You're checked out. Thanks!");
 });
+
+// ---------- Feedback (email-driven, token-based) --------------------------
+
+// GET /public/ratings/:token
+// Returns the facility card for the token's booking + the existing rating
+// (if any). The rating page uses this to pre-fill stars/comment/tags when
+// the user clicks the email link a second time to edit their rating.
+exports.ratingBooking = asyncHandler(async function (req, res) {
+  const check = ratingToken.verify(req.params.token);
+  if (!check.ok) return fail(res, 'Invalid or expired rating link', 400);
+  const { b: bookingId, u: userId } = check.payload;
+
+  const rows = await query(
+    'SELECT b.id, b.user_id, b.status, b.start_at, b.end_at, ' +
+    '       f.name AS facility_name, f.type AS facility_type, ' +
+    '       s.name AS site_name ' +
+    '  FROM `bookings` b ' +
+    '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    '  LEFT JOIN `sites` s ON s.id = f.site_id ' +
+    ' WHERE b.id = ? AND b.user_id = ? LIMIT 1',
+    [bookingId, userId]
+  );
+  if (rows.length === 0) return notFound(res, 'Booking not found');
+  const b = rows[0];
+  if (b.status !== 'completed') {
+    return fail(res, 'This booking is not eligible for rating', 409);
+  }
+
+  const rRows = await query(
+    'SELECT stars, comment, tags FROM `facility_ratings` WHERE booking_id = ? LIMIT 1',
+    [bookingId]
+  );
+  const existing = rRows.length > 0 ? {
+    stars: rRows[0].stars,
+    comment: rRows[0].comment || null,
+    tags: parsePublicTags(rRows[0].tags),
+  } : null;
+
+  return ok(res, {
+    booking: {
+      id: b.id,
+      facility_name: b.facility_name,
+      facility_type: b.facility_type,
+      site_name: b.site_name || null,
+      start_at: b.start_at,
+      end_at: b.end_at,
+    },
+    existing_rating: existing,
+  });
+});
+
+// POST /public/ratings/:token
+// Body: { stars, comment?, tags? }
+exports.submitRating = asyncHandler(async function (req, res) {
+  const check = ratingToken.verify(req.params.token);
+  if (!check.ok) return fail(res, 'Invalid or expired rating link', 400);
+  const { b: bookingId, u: userId } = check.payload;
+
+  const body = req.body || {};
+  const stars = parseInt(body.stars, 10);
+  if (!Number.isFinite(stars) || stars < 1 || stars > 5) {
+    return fail(res, 'stars must be an integer between 1 and 5', 422);
+  }
+
+  // Re-verify the booking belongs to the token's user and is completed.
+  const bRows = await query(
+    'SELECT id, user_id, facility_id, tenant_id, status ' +
+    '  FROM `bookings` WHERE id = ? LIMIT 1',
+    [bookingId]
+  );
+  if (bRows.length === 0) return notFound(res, 'Booking not found');
+  const bk = bRows[0];
+  if (bk.user_id !== userId) return fail(res, 'Token/booking mismatch', 403);
+  if (bk.status !== 'completed') {
+    return fail(res, 'Only completed bookings can be rated', 409);
+  }
+
+  const comment = (typeof body.comment === 'string' && body.comment.trim())
+    ? body.comment.trim().slice(0, 2000)
+    : null;
+  const tagsJson = Array.isArray(body.tags) && body.tags.length > 0
+    ? JSON.stringify(body.tags.filter((t) => typeof t === 'string').slice(0, 10))
+    : null;
+
+  await query(
+    'INSERT INTO `facility_ratings` ' +
+    '  (booking_id, facility_id, tenant_id, user_id, stars, comment, tags) ' +
+    ' VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+    'ON DUPLICATE KEY UPDATE stars = VALUES(stars), comment = VALUES(comment), tags = VALUES(tags)',
+    [bookingId, bk.facility_id, bk.tenant_id, bk.user_id, stars, comment, tagsJson]
+  );
+
+  return ok(res, { ok: true }, 'Thanks for your feedback!');
+});
+
+function parsePublicTags(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+  return [];
+}

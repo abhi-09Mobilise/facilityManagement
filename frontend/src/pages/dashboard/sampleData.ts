@@ -16,6 +16,13 @@
 
 export const SAMPLE_DATA_BANNER = 'SAMPLE DATA';
 
+// Master switch for the mock fallback used when the backend returns no
+// data. Keep this `false` for testing and production so widgets show
+// honest zeros / empty lists / "—" instead of made-up Rahul-and-Masala-chai
+// numbers. Flip to `true` only during early UI work on an empty tenant
+// where you need the dashboard to render with demo values.
+const USE_SAMPLE_FALLBACK = false;
+
 // ---------- Overview hero ----------
 export interface HeroOverview {
   nowLabel: string;              // "Wednesday, 7 Oct 2026 · 11:40"
@@ -28,12 +35,12 @@ export interface HeroOverview {
   availableToBook: number;       // 11
 }
 
-export function getHeroOverview(): HeroOverview {
+export function getHeroOverview(overlay?: Partial<HeroOverview>): HeroOverview {
   const now = new Date();
   const weekday = now.toLocaleDateString('en-GB', { weekday: 'long' });
   const dayMonth = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const hhmm = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return {
+  const base: HeroOverview = USE_SAMPLE_FALLBACK ? {
     nowLabel: `${weekday}, ${dayMonth} · ${hhmm}`,
     siteFilter: 'All sites',
     summary: 'All sites · last 30 days · 48 facilities across 6 buildings',
@@ -42,7 +49,19 @@ export function getHeroOverview(): HeroOverview {
     inUseNow: 28,
     startingWithin30Min: 8,
     availableToBook: 11,
+  } : {
+    // Empty-state baseline — overlay from the live hook populates the
+    // real numbers; everything the backend doesn't fill stays zero.
+    nowLabel: `${weekday}, ${dayMonth} · ${hhmm}`,
+    siteFilter: 'All sites',
+    summary: '',
+    rangeDays: 30,
+    occupiedPercent: 0,
+    inUseNow: 0,
+    startingWithin30Min: 0,
+    availableToBook: 0,
   };
+  return overlay ? { ...base, ...overlay } : base;
 }
 
 // ---------- KPI tiles ----------
@@ -57,50 +76,30 @@ export interface KpiTile {
   spark: number[];
 }
 
-export function getKpiTiles(): KpiTile[] {
-  return [
-    {
-      label: 'Total facilities',
-      value: '48',
-      secondary: '3 sites · 6 facility types',
-      spark: [],
-    },
-    {
-      label: 'Booked right now',
-      value: '28',
-      secondary: '58% occupied · 80 more today',
-      spark: [10, 14, 16, 18, 20, 24, 22, 25, 27, 28],
-    },
-    {
-      label: 'Bookings · 30 days',
-      value: '4,819',
-      trend: { seriesKey: 'bookings', direction: 'up', percent: 12.6, color: '#16a34a' },
-      secondary: 'vs previous 30 days',
-      spark: [120, 180, 90, 210, 160, 170, 220, 150, 190, 230, 180, 210],
-    },
-    {
-      label: 'Average feedback',
-      value: '4.1',
-      secondary: '1,012 reviews',
-      spark: [3.9, 4.0, 4.0, 3.9, 4.0, 4.1, 4.0, 4.2, 4.1, 4.1],
-    },
-    {
-      label: 'Pantry orders',
-      value: '768',
-      secondary: '19 per 100 check-ins',
-      spark: [20, 24, 18, 30, 28, 25, 32, 20, 26, 30, 22, 28],
-    },
-    {
-      // Phase-2 placeholder mirrored from LiveOverviewPage's Kpi row.
-      // Keeps the muted dash + "connects with the biometric integration"
-      // subtitle so the two surfaces read the same.
-      label: 'Biometric mismatches',
-      value: '—',
-      valueMuted: true,
-      secondary: 'connects with the biometric integration (Phase 2)',
-      spark: [],
-    },
+export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile[] {
+  const sample: KpiTile[] = [
+    { label: 'Total facilities',    value: '48',    secondary: '3 sites · 6 facility types', spark: [] },
+    { label: 'Booked right now',    value: '28',    secondary: '58% occupied · 80 more today', spark: [10, 14, 16, 18, 20, 24, 22, 25, 27, 28] },
+    { label: 'Bookings · 30 days',  value: '4,819', trend: { seriesKey: 'bookings', direction: 'up', percent: 12.6, color: '#16a34a' }, secondary: 'vs previous 30 days', spark: [120, 180, 90, 210, 160, 170, 220, 150, 190, 230, 180, 210] },
+    { label: 'Average feedback',    value: '4.1',   secondary: '1,012 reviews', spark: [3.9, 4.0, 4.0, 3.9, 4.0, 4.1, 4.0, 4.2, 4.1, 4.1] },
+    { label: 'Pantry orders',       value: '768',   secondary: '19 per 100 check-ins', spark: [20, 24, 18, 30, 28, 25, 32, 20, 26, 30, 22, 28] },
+    // Phase-2 placeholder — muted dash + biometric integration subtitle.
+    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'connects with the biometric integration (Phase 2)', spark: [] },
   ];
+  // Honest empty state — labels + "—" so cards keep their layout but
+  // show no fabricated numbers. The live overlay then fills in real
+  // values per tile where the backend provided them.
+  const empty: KpiTile[] = [
+    { label: 'Total facilities',    value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Booked right now',    value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Bookings · 30 days',  value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Average feedback',    value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Pantry orders',       value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'connects with the biometric integration (Phase 2)', spark: [] },
+  ];
+  const base = USE_SAMPLE_FALLBACK ? sample : empty;
+  if (!overlay) return base;
+  return base.map((tile) => (overlay[tile.label] ? { ...tile, ...overlay[tile.label] } : tile));
 }
 
 // ---------- Bookings over time ----------
@@ -110,10 +109,25 @@ export interface BookingsOverTimePoint {
   checkins: number;
 }
 
-export function getBookingsOverTime(): {
+// Optional overlay REPLACES both the series and summary when provided.
+// Partial overlays aren't supported — the live hook either returns a
+// complete object or null.
+export function getBookingsOverTime(
+  overlay?: {
+    series: BookingsOverTimePoint[];
+    summary: { checkedIn: number; cancelled: number; noShows: number; busiest: { day: string; count: number } };
+  } | null,
+): {
   series: BookingsOverTimePoint[];
   summary: { checkedIn: number; cancelled: number; noShows: number; busiest: { day: string; count: number } };
 } {
+  if (overlay && overlay.series.length > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) {
+    return {
+      series: [],
+      summary: { checkedIn: 0, cancelled: 0, noShows: 0, busiest: { day: '—', count: 0 } },
+    };
+  }
   // 28 daily points — 8 Sept through 5 Oct. Weekdays sit around 200–240,
   // weekends dip into the 25–50 range. Four full weekly cycles produce the
   // zigzag the hero chart shows between every third x-axis label.
@@ -150,7 +164,23 @@ export interface ChannelSlice {
   color: string;
 }
 
-export function getBookingChannel(): { slices: ChannelSlice[]; total: number } {
+// Optional overlay REPLACES the mock donut when provided. Live hook
+// passes it only when backend reports total > 0.
+export function getBookingChannel(
+  overlay?: { slices: ChannelSlice[]; total: number } | null,
+): { slices: ChannelSlice[]; total: number } {
+  if (overlay && overlay.total > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) {
+    return {
+      total: 0,
+      slices: [
+        { name: 'QR walk-in',   value: 0, color: '#8b5cf6' },
+        { name: 'Mobile app',   value: 0, color: '#3b82f6' },
+        { name: 'Web portal',   value: 0, color: '#10b981' },
+        { name: 'Door tablet',  value: 0, color: '#f59e0b' },
+      ],
+    };
+  }
   return {
     total: 4819,
     slices: [
@@ -172,7 +202,12 @@ export interface LiveFacility {
   note?: string;
 }
 
-export function getLiveFacilityStatus(): LiveFacility[] {
+// If `overlay` is a non-empty array it REPLACES the mock entries entirely
+// — used by the live hook once real per-facility snapshots start flowing.
+// Pass `null` or omit to keep the mock list.
+export function getLiveFacilityStatus(overlay?: LiveFacility[] | null): LiveFacility[] {
+  if (overlay && overlay.length > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) return [];
   return [
     { id: 'f1',  name: 'Palghat',    type: 'Conference Hall', site: 'Pune',           state: 'maintenance',   note: 'Under maintenance' },
     { id: 'f2',  name: 'Shivalik',   type: 'Conference Hall', site: 'Pune Tech Park', state: 'in_use',        note: 'In use · 10:00–11:00' },
@@ -203,7 +238,15 @@ export interface MostBookedRow {
   bookings: number;
 }
 
-export function getMostBooked(by: 'facility' | 'type'): MostBookedRow[] {
+// Optional overlay keyed by the current mode. Non-empty array for the
+// requested mode replaces the mock list for that mode only.
+export function getMostBooked(
+  by: 'facility' | 'type',
+  overlay?: { facility?: MostBookedRow[]; type?: MostBookedRow[] } | null,
+): MostBookedRow[] {
+  const live = overlay?.[by];
+  if (live && live.length > 0) return live;
+  if (!USE_SAMPLE_FALLBACK) return [];
   if (by === 'facility') {
     return [
       { key: 'Dholavira', bookings: 198 },
@@ -233,13 +276,28 @@ export interface PeakCell {
   count: number;
 }
 
-export function getPeakBookingTimes(): {
+// Optional overlay REPLACES the full heatmap when provided. The live
+// hook either returns a complete object (from dashboardsApi.peakTimes)
+// or null so partial overlays aren't a concern here.
+export function getPeakBookingTimes(
+  overlay?: {
+    cells: PeakCell[];
+    busiestSlot: string;
+    busiestHour: string;
+    quietestWorking: string;
+    maxPerSlot: number;
+  } | null,
+): {
   cells: PeakCell[];
   busiestSlot: string;
   busiestHour: string;
   quietestWorking: string;
   maxPerSlot: number;
 } {
+  if (overlay && overlay.cells.length > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) {
+    return { cells: [], busiestSlot: '—', busiestHour: '—', quietestWorking: '—', maxPerSlot: 0 };
+  }
   const days: PeakCell['weekday'][] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hours = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
   const cells: PeakCell[] = [];
@@ -283,7 +341,12 @@ export interface ActivityItem {
   ago: string;
 }
 
-export function getRecentActivity(): ActivityItem[] {
+// If `overlay` is a non-empty array it REPLACES the mock items entirely —
+// used by the live hook once real booking rows start flowing in. Pass
+// `null` or omit to keep the mock feed.
+export function getRecentActivity(overlay?: ActivityItem[] | null): ActivityItem[] {
+  if (overlay && overlay.length > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) return [];
   return [
     { id: 'a1', icon: 'booking', title: '**Rahul M.** booked **Badami**',        description: 'Web portal · 17:00 for 60 min · Bengaluru Campus', ago: '55m ago' },
     { id: 'a2', icon: 'pantry',  title: 'Pantry order for **Orchha**',           description: '4 × Cookies · by Rohit G. · Bengaluru Campus',     ago: '50m ago' },
@@ -306,13 +369,38 @@ export interface FeedbackRow {
   mostMentioned: string;
 }
 
-export function getFeedback(): {
+// Optional overlay REPLACES the full mock payload when provided. The live
+// hook only passes it when reviews > 0 so partial overlays aren't a
+// concern — either we have real ratings and show them, or we fall back
+// to the demo set.
+export function getFeedback(
+  overlay?: {
+    overall: number;
+    reviews: number;
+    distribution: { stars: 5 | 4 | 3 | 2 | 1; percent: number }[];
+    needsAttention: FeedbackRow[];
+    topRated: FeedbackRow[];
+  } | null,
+): {
   overall: number;
   distribution: { stars: 5 | 4 | 3 | 2 | 1; percent: number }[];
   reviews: number;
   needsAttention: FeedbackRow[];
   topRated: FeedbackRow[];
 } {
+  if (overlay && overlay.reviews > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) {
+    return {
+      overall: 0,
+      reviews: 0,
+      distribution: [
+        { stars: 5, percent: 0 }, { stars: 4, percent: 0 }, { stars: 3, percent: 0 },
+        { stars: 2, percent: 0 }, { stars: 1, percent: 0 },
+      ],
+      needsAttention: [],
+      topRated: [],
+    };
+  }
   const needs: FeedbackRow[] = [
     { initials: 'Sh', name: 'Shivalik', type: 'Conference Hall', site: 'Pune Tech Park', rating: 3.4, reviews: 23, mostMentioned: 'Wi-Fi drops' },
     { initials: 'Ar', name: 'Aravalli', type: 'Conference Hall', site: 'Mumbai HQ',       rating: 3.4, reviews: 12, mostMentioned: 'Wi-Fi drops' },
@@ -350,14 +438,25 @@ export interface PantryItem {
   color: string;
 }
 
-export function getPantryOrders(): {
+// Live overlay: when the hook returns a non-null payload from
+// dashboardsApi.pantryOrders(), it replaces the mock summary + daily +
+// topItems. `delivered` / `inProgress` / `avgDeliveryMin` are nullable
+// because the pantry module doesn't track delivery lifecycle yet — the
+// widget renders those as a muted "—" when null.
+export interface PantryOrdersData {
   created: number;
-  delivered: number;
-  inProgress: number;
-  avgDeliveryMin: number;
+  delivered: number | null;
+  inProgress: number | null;
+  avgDeliveryMin: number | null;
   daily: { day: string; orders: number }[];
   topItems: PantryItem[];
-} {
+}
+
+export function getPantryOrders(overlay?: PantryOrdersData | null): PantryOrdersData {
+  if (overlay && overlay.created > 0) return overlay;
+  if (!USE_SAMPLE_FALLBACK) {
+    return { created: 0, delivered: null, inProgress: null, avgDeliveryMin: null, daily: [], topItems: [] };
+  }
   const dayLabels = ['8 Sept','16 Sept','24 Sept','2 Oct'];
   const bars: { day: string; orders: number }[] = [];
   const sampleOrders = [26, 30, 10, 32, 18, 24, 20, 36, 32, 34, 22, 10, 28, 24, 36, 32, 34, 28, 20, 10, 30, 36, 32, 24, 28, 32, 36, 28];

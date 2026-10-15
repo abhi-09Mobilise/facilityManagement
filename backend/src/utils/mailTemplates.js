@@ -609,3 +609,64 @@ exports.bookingEndingSoon = function (opts) {
     html: wrap(body, { title: 'Booking ending soon' }),
   };
 };
+
+// ----- feedbackRequest ----------------------------------------------------
+// Sent by the feedbackMailer cron once a booking completes. The user can
+// click any star in the email OR the "Rate this booking" button and will
+// land on the public /rate/:token page with (optionally) their chosen
+// star pre-selected via the ?stars=N query param.
+exports.feedbackRequest = function ({
+  bookerName, facilityName, facilityType, siteName, startAt, endAt, ratingUrl,
+}) {
+  const safeUrl = String(ratingUrl || '').replace(/"/g, '%22');
+  const starRow = [1, 2, 3, 4, 5].map(function (n) {
+    const href = safeUrl + (safeUrl.indexOf('?') >= 0 ? '&' : '?') + 'stars=' + n;
+    return (
+      '<a href="' + esc(href) + '" ' +
+      'style="display:inline-block;text-decoration:none;color:#f59e0b;' +
+      'font-size:34px;line-height:1;margin:0 3px;">&#9733;</a>'
+    );
+  }).join('');
+
+  const summary =
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0;font-size:14px;">' +
+      '<tr><td style="padding:6px 0;color:#6b7280;width:140px;">Facility</td>' +
+        '<td style="padding:6px 0;">' + esc(facilityName) +
+        (facilityType ? ' <span style="color:#6b7280;">(' + esc(facilityType) + ')</span>' : '') +
+        '</td></tr>' +
+      (siteName ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Site</td>' +
+          '<td style="padding:6px 0;">' + esc(siteName) + '</td></tr>'
+      ) : '') +
+      (startAt ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">Start</td>' +
+          '<td style="padding:6px 0;">' + esc(startAt) + '</td></tr>'
+      ) : '') +
+      (endAt ? (
+        '<tr><td style="padding:6px 0;color:#6b7280;">End</td>' +
+          '<td style="padding:6px 0;">' + esc(endAt) + '</td></tr>'
+      ) : '') +
+    '</table>';
+
+  const body =
+    '<p style="font-size:16px;margin:0 0 12px;">' +
+      'Hi' + (bookerName ? ' ' + esc(bookerName) : '') + ',' +
+    '</p>' +
+    '<p>How was your experience at <strong>' + esc(facilityName) + '</strong>?</p>' +
+    summary +
+    '<div style="text-align:center;margin:20px 0 10px;">' + starRow + '</div>' +
+    '<p style="text-align:center;margin:4px 0 22px;color:#6b7280;font-size:12px;">' +
+      'Tap any star — or use the button below to add a comment.' +
+    '</p>' +
+    '<p style="text-align:center;margin:0 0 10px;">' +
+      btn('Rate this booking', safeUrl) +
+    '</p>' +
+    '<p style="color:#6b7280;font-size:12px;margin-top:22px;">' +
+      'This link stays valid for 30 days.' +
+    '</p>';
+
+  return {
+    subject: 'How was ' + facilityName + '? Tap to rate',
+    html: wrap(body, { title: 'Rate your experience' }),
+  };
+};

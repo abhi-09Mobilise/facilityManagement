@@ -26,8 +26,20 @@ interface Tooltip {
   value: number;
 }
 
-export function PeakBookingTimes() {
-  const { cells, busiestSlot, busiestHour, quietestWorking, maxPerSlot } = getPeakBookingTimes();
+interface Props {
+  // Peak heatmap from dashboardsApi.peakTimes(). When present and
+  // non-empty, replaces the mock cells entirely.
+  liveOverlay?: {
+    cells: PeakCell[];
+    busiestSlot: string;
+    busiestHour: string;
+    quietestWorking: string;
+    maxPerSlot: number;
+  } | null;
+}
+
+export function PeakBookingTimes({ liveOverlay }: Props = {}) {
+  const { cells, busiestSlot, busiestHour, quietestWorking, maxPerSlot } = getPeakBookingTimes(liveOverlay);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterType, setFilterType] = useState<string>('All facility types');
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
@@ -50,15 +62,15 @@ export function PeakBookingTimes() {
   cells.forEach((c) => lookup.set(`${c.weekday}-${c.hour}`, c.count));
 
   return (
-    <div className="rounded-2xl bg-white border border-slate-200/70 shadow-sm p-5 h-full flex flex-col">
+    <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 shadow-sm p-5 h-full flex flex-col">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
-          <div className="h-9 w-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+          <div className="h-9 w-9 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
             <Clock className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-900">Peak booking times</h3>
-            <p className="text-xs text-slate-500">Bookings by start hour and weekday</p>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Peak booking times</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Bookings by start hour and weekday</p>
           </div>
         </div>
 
@@ -68,7 +80,7 @@ export function PeakBookingTimes() {
             onClick={() => setFilterOpen((v) => !v)}
             aria-haspopup="listbox"
             aria-expanded={filterOpen}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-400/60 text-emerald-700 text-xs font-medium bg-emerald-50/50 hover:bg-emerald-50"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-400/60 text-emerald-700 dark:text-emerald-300 text-xs font-medium bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
           >
             {filterType}
             <ChevronDown className={'h-3.5 w-3.5 transition-transform ' + (filterOpen ? 'rotate-180' : '')} />
@@ -76,7 +88,7 @@ export function PeakBookingTimes() {
           {filterOpen && (
             <ul
               role="listbox"
-              className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white border border-slate-200 shadow-lg z-20 py-1 text-sm"
+              className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 shadow-lg z-20 py-1 text-sm"
             >
               {FACILITY_TYPES.map((t) => {
                 const selected = filterType === t;
@@ -90,8 +102,8 @@ export function PeakBookingTimes() {
                       className={
                         'w-full text-left px-3 py-1.5 transition-colors ' +
                         (selected
-                          ? 'bg-slate-100 text-slate-900 font-medium'
-                          : 'text-slate-700 hover:bg-slate-50')
+                          ? 'bg-slate-100 text-slate-900 dark:text-slate-100 font-medium'
+                          : 'text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700')
                       }
                     >
                       {t}
@@ -107,19 +119,19 @@ export function PeakBookingTimes() {
       <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <Callout
           Icon={Flame}
-          iconBg="bg-orange-100 text-orange-600"
+          iconBg="bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-400"
           label="Busiest slot"
           value={busiestSlot}
         />
         <Callout
           Icon={Sun}
-          iconBg="bg-blue-100 text-blue-600"
+          iconBg="bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400"
           label="Busiest hour · busiest day"
           value={busiestHour}
         />
         <Callout
           Icon={Moon}
-          iconBg="bg-emerald-100 text-emerald-600"
+          iconBg="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600"
           label="Quietest working hour"
           value={quietestWorking}
         />
@@ -131,7 +143,7 @@ export function PeakBookingTimes() {
           <div className="grid" style={{ gridTemplateColumns: '48px repeat(13, minmax(32px, 1fr))' }}>
             <div />
             {HOURS.map((h) => (
-              <div key={h} className="text-[10px] font-medium text-slate-500 text-center pb-1.5">
+              <div key={h} className="text-[10px] font-medium text-slate-500 dark:text-slate-400 text-center pb-1.5">
                 {h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}
               </div>
             ))}
@@ -139,10 +151,12 @@ export function PeakBookingTimes() {
 
           {DAYS.map((d) => (
             <div key={d} className="grid items-center" style={{ gridTemplateColumns: '48px repeat(13, minmax(32px, 1fr))' }}>
-              <div className="text-xs font-medium text-slate-600 pr-2 text-right py-0.5">{d}</div>
+              <div className="text-xs font-medium text-slate-600 dark:text-slate-400 pr-2 text-right py-0.5">{d}</div>
               {HOURS.map((h) => {
                 const v = lookup.get(`${d}-${h}`) || 0;
-                const ratio = Math.min(1, v / maxPerSlot);
+                // Guard against maxPerSlot=0 (empty data window) — otherwise
+                // v/0 becomes NaN and ratioToBlue returns undefined.
+                const ratio = maxPerSlot > 0 ? Math.min(1, v / maxPerSlot) : 0;
                 const bg = ratioToBlue(ratio);
                 const isHovered = tooltip?.day === d && tooltip?.hour === h;
                 return (
@@ -172,7 +186,7 @@ export function PeakBookingTimes() {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center gap-3 text-[10px] text-slate-500">
+      <div className="mt-4 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
         <span>Fewer</span>
         {[0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0].map((r, i) => (
           <span key={i} className="h-3 w-5 rounded" style={{ background: ratioToBlue(r) }} />
@@ -188,7 +202,7 @@ export function PeakBookingTimes() {
           <div className="font-semibold">
             {tooltip.day} {formatHour(tooltip.hour)}–{formatHour(tooltip.hour + 1)}
           </div>
-          <div className="text-slate-300">{tooltip.value} bookings</div>
+          <div className="text-slate-300 dark:text-slate-600">{tooltip.value} bookings</div>
         </div>
       )}
     </div>
@@ -207,13 +221,13 @@ function Callout({
   value: string;
 }) {
   return (
-    <div className="rounded-lg bg-slate-50 border border-slate-200/70 p-3 flex items-center gap-3">
+    <div className="rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 p-3 flex items-center gap-3">
       <div className={`h-9 w-9 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <div className="text-[11px] text-slate-500 leading-tight">{label}</div>
-        <div className="text-sm font-semibold text-slate-900 truncate">{value}</div>
+        <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">{label}</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{value}</div>
       </div>
     </div>
   );

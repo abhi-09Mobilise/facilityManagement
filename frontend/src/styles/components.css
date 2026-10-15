@@ -59,11 +59,11 @@
   .chip-pending      { @apply chip bg-amber-soft text-amber-ink; }
   .chip-approved     { @apply chip bg-teal-soft text-teal-ink; }
   .chip-rejected     { @apply chip bg-coral-soft text-coral-ink; }
-  .chip-cancelled    { @apply chip bg-[#EDF0F5] text-mutedx; }
+  .chip-cancelled    { @apply chip bg-[#EDF0F5] text-mutedx dark:bg-slate-800 dark:text-slate-400; }
   .chip-checkin      { @apply chip bg-indigo-soft text-indigo-ink; }
-  .chip-checkout     { @apply chip bg-violet-soft text-[#5B27B8]; }
+  .chip-checkout     { @apply chip bg-violet-soft text-[#5B27B8] dark:text-violet-200; }
   .chip-info         { @apply chip bg-indigo-soft text-indigo-ink; }
-  .chip-muted        { @apply chip bg-[#EDF0F5] text-mutedx; }
+  .chip-muted        { @apply chip bg-[#EDF0F5] text-mutedx dark:bg-slate-800 dark:text-slate-400; }
 
   /* ---------- tabs (prototype .tabs) ---------- */
   .tabs-bar          { @apply flex gap-1 border-b border-line text-sm overflow-x-auto; }

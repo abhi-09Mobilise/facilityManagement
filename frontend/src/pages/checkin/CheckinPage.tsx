@@ -94,18 +94,18 @@ export default function CheckinPage() {
   const canCheckOut = !!(ok && result?.checked_in_at && !result?.checked_out_at);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-800 flex flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         {/* Brand header */}
-        <div className="flex items-center justify-center gap-2 mb-6 text-slate-700">
-          <QrCode className="h-6 w-6 text-blue-600" />
+        <div className="flex items-center justify-center gap-2 mb-6 text-slate-700 dark:text-slate-300">
+          <QrCode className="h-6 w-6 text-blue-600 dark:text-blue-400" />
           <span className="text-lg font-bold">Check in</span>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
           {phase === 'form' && (
             <form onSubmit={submit}>
-              <p className="text-sm text-slate-600 mb-4 text-center">
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 text-center">
                 Enter the <strong>check-in code</strong> from your booking
                 confirmation email.
               </p>
@@ -120,7 +120,7 @@ export default function CheckinPage() {
                 placeholder="ABCD-2345"
                 aria-label="Check-in code"
                 className="w-full text-center tracking-[0.3em] font-mono text-2xl uppercase
-                           rounded-xl border border-slate-300 bg-slate-50 px-4 py-4
+                           rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 px-4 py-4
                            focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
               {formError && (
@@ -140,8 +140,8 @@ export default function CheckinPage() {
 
           {phase === 'loading' && (
             <div className="flex flex-col items-center py-10">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-              <p className="text-sm text-slate-500 mt-3">Checking you in…</p>
+              <Loader2 className="h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" />
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-3">Checking you in…</p>
             </div>
           )}
 
@@ -155,27 +155,27 @@ export default function CheckinPage() {
                 <XCircle className="h-14 w-14 text-red-500 mx-auto" />
               )}
 
-              <h2 className="text-xl font-bold mt-3 text-slate-800">
+              <h2 className="text-xl font-bold mt-3 text-slate-800 dark:text-slate-200">
                 {ok
                   ? (checkedOut
                       ? "You're checked out"
                       : (result.already ? 'Already checked in' : "You're checked in"))
                   : 'Not checked in'}
               </h2>
-              <p className="text-sm text-slate-600 mt-1">{result.msg}</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{result.msg}</p>
 
               {(result.facility_name || result.start_at) && (
-                <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 p-4 text-left">
+                <div className="mt-4 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 text-left">
                   {result.facility_name && (
-                    <div className="font-semibold text-slate-800">
+                    <div className="font-semibold text-slate-800 dark:text-slate-200">
                       {result.facility_name}
                       {result.facility_type && (
-                        <span className="text-slate-400 font-normal"> · {result.facility_type}</span>
+                        <span className="text-slate-400 dark:text-slate-500 font-normal"> · {result.facility_type}</span>
                       )}
                     </div>
                   )}
                   {result.start_at && (
-                    <div className="text-sm text-slate-500 mt-1">
+                    <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                       {fmtWhen(result.start_at)}
                       {result.end_at && <> – {fmtWhen(result.end_at)}</>}
                     </div>
@@ -195,8 +195,8 @@ export default function CheckinPage() {
               <button
                 onClick={reset}
                 className={(canCheckOut ? 'mt-3' : 'mt-6') +
-                  ' w-full rounded-xl border border-slate-300 text-slate-700' +
-                  ' font-semibold text-base py-3.5 hover:bg-slate-50 transition'}
+                  ' w-full rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300' +
+                  ' font-semibold text-base py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700 transition'}
               >
                 {ok ? 'Done' : 'Try again'}
               </button>
@@ -204,7 +204,7 @@ export default function CheckinPage() {
           )}
         </div>
 
-        <p className="text-xs text-slate-400 text-center mt-5">
+        <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-5">
           Having trouble? Check the code in your confirmation email.
         </p>
       </div>

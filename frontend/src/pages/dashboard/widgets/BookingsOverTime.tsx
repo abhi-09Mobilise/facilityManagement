@@ -3,21 +3,32 @@
 
 import { Activity } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { getBookingsOverTime } from '../sampleData';
+import { getBookingsOverTime, type BookingsOverTimePoint } from '../sampleData';
+import { useChartColors } from './useChartColors';
 
-export function BookingsOverTime() {
-  const { series, summary } = getBookingsOverTime();
+interface Props {
+  // When present, replaces both the series and summary with values the
+  // live hook derived from dashboardsApi.gantt() grouped by day.
+  liveOverlay?: {
+    series: BookingsOverTimePoint[];
+    summary: { checkedIn: number; cancelled: number; noShows: number; busiest: { day: string; count: number } };
+  } | null;
+}
+
+export function BookingsOverTime({ liveOverlay }: Props = {}) {
+  const { series, summary } = getBookingsOverTime(liveOverlay);
+  const cc = useChartColors();
 
   return (
-    <div className="rounded-2xl bg-white border border-slate-200/70 shadow-sm p-5 h-full flex flex-col">
+    <div className="rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 shadow-sm p-5 h-full flex flex-col">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="flex items-start gap-3">
-          <div className="h-9 w-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+          <div className="h-9 w-9 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
             <Activity className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-900">Bookings over time</h3>
-            <p className="text-xs text-slate-500">Bookings made vs. check-ins completed, per day</p>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Bookings over time</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Bookings made vs. check-ins completed, per day</p>
           </div>
         </div>
 
@@ -48,27 +59,28 @@ export function BookingsOverTime() {
                 <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} vertical={false} />
             <XAxis
               dataKey="day"
-              tick={{ fontSize: 10, fill: '#64748b' }}
+              tick={{ fontSize: 10, fill: cc.tick }}
               tickLine={false}
               axisLine={false}
-              interval={2}
+              interval="preserveStartEnd"
+              minTickGap={32}
             />
-            <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={28} />
+            <YAxis tick={{ fontSize: 10, fill: cc.tick }} tickLine={false} axisLine={false} width={28} />
             <Tooltip
               contentStyle={{
                 borderRadius: 8,
                 border: 'none',
-                backgroundColor: '#1e293b',
+                backgroundColor: cc.tooltipBg,
                 padding: '8px 12px',
                 fontSize: 12,
               }}
-              labelStyle={{ color: '#f8fafc', fontWeight: 600, marginBottom: 4 }}
-              itemStyle={{ padding: 0 }}
+              labelStyle={{ color: cc.tooltipText, fontWeight: 600, marginBottom: 4 }}
+              itemStyle={{ padding: 0, color: cc.tooltipText }}
               separator=": "
-              cursor={{ stroke: '#cbd5e1', strokeDasharray: '3 3' }}
+              cursor={{ stroke: cc.cursor, strokeDasharray: '3 3' }}
             />
             <Area name="Bookings"  type="monotone" dataKey="bookings" stroke="#3b82f6" strokeWidth={2} fill="url(#g-bookings)" />
             <Area name="Check-ins" type="monotone" dataKey="checkins" stroke="#10b981" strokeWidth={2} fill="url(#g-checkins)" />
@@ -81,7 +93,7 @@ export function BookingsOverTime() {
 
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-slate-600">
+    <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
       <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
       {label}
     </span>
@@ -90,9 +102,9 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 function StatTile({ value, label }: { value: string; label: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 border border-slate-200/50 p-3">
-      <div className="text-xl font-bold text-slate-900">{value}</div>
-      <div className="text-[11px] text-slate-500 mt-0.5 leading-tight">{label}</div>
+    <div className="rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200/50 p-3">
+      <div className="text-xl font-bold text-slate-900 dark:text-slate-100">{value}</div>
+      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">{label}</div>
     </div>
   );
 }

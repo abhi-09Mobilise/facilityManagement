@@ -43,4 +43,10 @@ router.get('/t/:slug/facilities/:id',                        ctrl.facility);
 router.post('/checkin',                                      ctrl.checkin);
 router.post('/checkout',                                     ctrl.checkout);
 
+// Email-driven feedback flow. Token in the URL is a signed payload that
+// identifies the booking + user (see utils/ratingToken.js). Rate limiter
+// above makes brute-forcing the signature impractical.
+router.get('/ratings/:token',                                ctrl.ratingBooking);
+router.post('/ratings/:token',                               ctrl.submitRating);
+
 module.exports = router;

@@ -12,6 +12,7 @@ const errorHandler = require('./middleware/errorHandler');
 const mailer = require('./utils/mailer');
 const checkoutSweeper = require('./jobs/checkoutSweeper'); // F02
 const noShowSweeper = require('./jobs/noShowSweeper'); // M12
+const feedbackMailer = require('./jobs/feedbackMailer'); // SpaceDesk feedback
 
 const app = express();
 
@@ -70,4 +71,7 @@ app.listen(config.port, () => {
   // M12 - start the no-show auto-release sweeper (every 5 minutes by default).
   // Set NO_SHOW_SWEEP_MODE=log to dry-run (log candidates, release nothing).
   noShowSweeper.start(Number(process.env.NO_SHOW_SWEEP_MS) || undefined);
+  // SpaceDesk - start the feedback-request mailer (every 10 minutes by default).
+  // Set FEEDBACK_MAIL_SWEEP_MODE=log to dry-run (log would-be emails, send none).
+  feedbackMailer.start(Number(process.env.FEEDBACK_MAIL_SWEEP_MS) || undefined);
 });

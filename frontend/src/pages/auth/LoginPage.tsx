@@ -25,8 +25,11 @@ const MOTIF: Array<'free' | 'in' | 'book' | 'pend' | 'blk'> = [
 const MOTIF_CLASS: Record<string, string> = {
   free: 'border-teal bg-transparent',
   in:   'border-indigo bg-indigo',
-  book: 'border-indigo bg-indigo/30',
-  pend: 'border-amber bg-amber/25',
+  // `bg-indigo/30` and `bg-amber/25` won't resolve now that the Tailwind
+  // tokens are `var(--indigo)` instead of hex (var() + /opacity isn't
+  // supported). Inline the exact prototype hex with the opacity modifier.
+  book: 'border-indigo bg-[#3657E8]/30',
+  pend: 'border-amber bg-[#D98A0B]/25',
   blk:  'border-white/25 bg-[repeating-linear-gradient(45deg,rgba(255,255,255,.16),rgba(255,255,255,.16)_2px,transparent_2px,transparent_5px)]',
 };
 

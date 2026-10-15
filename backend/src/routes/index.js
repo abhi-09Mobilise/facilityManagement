@@ -24,6 +24,9 @@ router.use('/pantries',           require('../modules/pantries/pantries.routes')
 router.use('/bookings',  require('../modules/bookings/bookings.routes'));
 router.use('/approvals', require('../modules/approvals/approvals.routes'));
 
+// Facility feedback — users rate completed bookings from /my-bookings
+router.use('/ratings',   require('../modules/ratings/ratings.routes'));
+
 // Floor-plan auto-detection (admin only; proxies to Python microservice)
 router.use('/floor-scan', require('../modules/floorScan/floorScan.routes'));
 

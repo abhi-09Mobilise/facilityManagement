@@ -25,11 +25,12 @@ import {
   Menu, LogOut, Building2, Users, Building, Layers,
   Sparkles, UsersRound, UtensilsCrossed, CalendarCheck, FolderCheck, BookOpen,
   X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee, Network,
-  Warehouse, RefreshCw, Boxes, Activity, ShieldCheck,
+  Warehouse, RefreshCw, Boxes, Activity, ShieldCheck, Sun, Moon,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { RefreshProvider, useRefresh } from '@/context/RefreshContext';
 import { TenantScopeProvider, useTenantScope } from '@/context/TenantScopeContext';
+import { useThemeMode } from '@/context/ThemeContext';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
@@ -353,7 +354,7 @@ function AppLayoutInner() {
   );
 
   return (
-    <div className="min-h-screen bg-paper overflow-x-hidden">
+    <div className="min-h-screen bg-paper text-inktext overflow-x-hidden">
       {/* ============ HEADER (prototype topbar: light, bordered) ============ */}
       <header
         className="fixed top-0 inset-x-0 z-30 bg-card border-b border-line"
@@ -416,6 +417,8 @@ function AppLayoutInner() {
               </select>
             )}
           </div>
+
+          <ThemeToggleButton />
 
           <span
             className={cn(
@@ -516,6 +519,24 @@ function AppLayoutInner() {
         </div>
       </main>
     </div>
+  );
+}
+
+// Light/dark toggle. Reads the current mode from ThemeContext so the icon
+// reflects the next-click action (sun ⇒ switch to light; moon ⇒ switch to dark).
+function ThemeToggleButton() {
+  const { mode, toggle } = useThemeMode();
+  const isDark = mode === 'dark';
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="shrink-0 p-2 rounded-[9px] text-mutedx hover:text-foreground hover:bg-paper focus:outline-none focus:ring-2 focus:ring-indigo/40 border border-transparent hover:border-line transition-colors"
+    >
+      {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+    </button>
   );
 }
 

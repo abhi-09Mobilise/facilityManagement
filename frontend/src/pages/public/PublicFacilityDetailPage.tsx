@@ -4,12 +4,14 @@ import { Link as RouterLink, useParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { publicApi, type FacilityDetailPayload } from '@/api/public.api';
+import { useAuth } from '@/context/AuthContext';
 import PublicShell from './components/PublicShell';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function PublicFacilityDetailPage() {
   const { slug = '', id = '' } = useParams();
+  const { user } = useAuth();
   const [data, setData] = useState<FacilityDetailPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,9 +76,23 @@ export default function PublicFacilityDetailPage() {
                 </ul>
               )}
             </div>
-            <Button asChild className="w-full justify-center">
-              <RouterLink to="/login">Sign in to book</RouterLink>
-            </Button>
+            {/* QR walk-in entry point. The authenticated booking page reads
+                `facility_id` + `channel=qr` from the URL — preselects the
+                facility and tags the row so the dashboard channel donut
+                credits the QR slice. If the visitor isn't logged in yet,
+                bounce them through /login?next= first (LoginPage already
+                supports the `next` param). */}
+            {(() => {
+              const bookPath = `/facility/type/${f.type}?facility_id=${f.id}&channel=qr`;
+              const href = user ? bookPath : `/login?next=${encodeURIComponent(bookPath)}`;
+              return (
+                <Button asChild className="w-full justify-center">
+                  <RouterLink to={href}>
+                    {user ? 'Book this facility' : 'Sign in to book'}
+                  </RouterLink>
+                </Button>
+              );
+            })()}
           </div>
         </div>
       </div>

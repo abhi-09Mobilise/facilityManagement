@@ -26,7 +26,7 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
-import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import BookingSuccessDialog from './components/BookingSuccessDialog';
 import PantryOrderPanel, { type PantryOrder } from './components/PantryOrderPanel'; // F06
@@ -58,9 +58,24 @@ type CheckState = 'idle' | 'checking' | 'free' | 'conflict' | 'error';
 
 export default function FacilityDetailPage() {
   const { type: rawType } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   const facilityType = VALID_TYPES.includes(rawType as FacilityType) ? (rawType as FacilityType) : null;
+
+  // QR walk-in deep link support:
+  //   /facility/type/<type>?facility_id=<id>&channel=qr
+  // `facility_id` pre-selects the dropdown once the facilities list loads so
+  // the user doesn't have to pick it manually after scanning the QR.
+  // `channel` tags the booking so the dashboard "Booking channel" donut
+  // credits the right slice (backend validates against the enum, so passing
+  // 'portal' from the normal navigation flow is harmless too).
+  const preselectFacilityId = Number(searchParams.get('facility_id')) || null;
+  const incomingChannel = searchParams.get('channel') as
+    'portal' | 'app' | 'qr' | 'tablet' | null;
+  const bookingChannel = incomingChannel && ['portal', 'app', 'qr', 'tablet'].includes(incomingChannel)
+    ? incomingChannel
+    : undefined;
 
   // ----- data fetching ---------------------------------------------------
   const [facilities, setFacilities] = useState<Facility[]>([]);
@@ -164,7 +179,13 @@ export default function FacilityDetailPage() {
         const list = (fRes.data?.data || []).filter((f) => f.status);
         setFacilities(list);
         setMealTimes((mRes.data as MealTime[]) || []);
-        if (list.length === 1) setFacilityId(list[0].id);
+        // QR deep-link preselection takes precedence over the "only one
+        // facility of this type" shortcut.
+        if (preselectFacilityId && list.some((f) => f.id === preselectFacilityId)) {
+          setFacilityId(preselectFacilityId);
+        } else if (list.length === 1) {
+          setFacilityId(list[0].id);
+        }
       })
       .catch((e: unknown) => {
         setError(
@@ -383,6 +404,10 @@ export default function FacilityDetailPage() {
         title: title || undefined,
         remarks: remarks || undefined,
         repeat_type: 'none',
+        // QR walk-in / mobile / tablet entry points pass this through the
+        // URL; normal portal navigation leaves it undefined and the backend
+        // defaults to 'portal'.
+        channel: bookingChannel,
         meal_time_ids: selectedMealIds,
         guests: guests.map((g) => ({
           fname: g.fname || undefined,

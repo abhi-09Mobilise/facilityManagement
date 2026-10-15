@@ -65,33 +65,55 @@
   }
 
   .dark {
-    --background:            222 47% 6%;
-    --foreground:            0 0% 98%;
+    /* ============================================================
+       Raw hex tokens — dark variants of the SoCampus palette.
+       `--ink` and `--ink-2` stay dark on purpose: they're used for
+       brand surfaces (login panel, chrome) that should remain
+       navy regardless of mode. `--text` is the body text colour and
+       does flip to light in dark mode.
+       Brand hues (indigo/teal/amber/coral/violet) stay recognisable
+       but lift ~15% so they contrast on dark backgrounds. Their
+       `-soft` chip backgrounds become deep tints; their `-ink`
+       foreground text becomes a light tint.
+       ============================================================ */
+    --ink:        #0A1522;  --ink-2:      #15223A;
+    --paper:      #0B131F;  --line:       #1E2A3C;  --line-2: #2A3A52;
+    --text:       #E6EDF5;  --muted-x:    #8A98B0;  --faint:  #5D6B82;
+    --indigo:     #5B78F0;  --indigo-soft:#1C2A52;  --indigo-ink:#A9BAFF;
+    --teal:       #2CB5A2;  --teal-soft:  #0F2E2A;  --teal-ink:  #6EDBCB;
+    --amber:      #E8A42E;  --amber-soft: #3A2A0C;  --amber-ink: #F5C97A;
+    --coral:      #E96A52;  --coral-soft: #3A1D16;  --coral-ink: #F2A496;
+    --violet:     #9B6DF0;  --violet-soft:#2A1C52;
+    --shadow-card:  0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -8px rgba(0, 0, 0, .55);
 
-    --card:                  222 47% 8%;
-    --card-foreground:       0 0% 98%;
+    /* shadcn semantic tokens for dark mode */
+    --background:            218 44% 8%;    /* paper #0B131F */
+    --foreground:            214 29% 93%;   /* text  #E6EDF5 */
 
-    --popover:               222 47% 8%;
-    --popover-foreground:    0 0% 98%;
+    --card:                  218 36% 11%;   /* a shade lighter than paper */
+    --card-foreground:       214 29% 93%;
 
-    --primary:               216 62% 60%;
-    --primary-foreground:    222 47% 6%;
+    --popover:               218 36% 11%;
+    --popover-foreground:    214 29% 93%;
 
-    --secondary:             217 33% 17%;
-    --secondary-foreground:  0 0% 98%;
+    --primary:               229 84% 65%;   /* indigo lift */
+    --primary-foreground:    0 0% 100%;
 
-    --muted:                 217 33% 17%;
-    --muted-foreground:      215 20% 65%;
+    --secondary:             218 32% 16%;
+    --secondary-foreground:  214 29% 93%;
 
-    --accent:                217 33% 17%;
-    --accent-foreground:     0 0% 98%;
+    --muted:                 218 32% 16%;
+    --muted-foreground:      219 15% 62%;   /* muted-x #8A98B0 */
 
-    --destructive:           0 62% 50%;
-    --destructive-foreground: 0 0% 98%;
+    --accent:                229 46% 22%;   /* indigo-soft dark */
+    --accent-foreground:     229 100% 83%;  /* indigo-ink dark */
 
-    --border:                217 33% 17%;
-    --input:                 217 33% 17%;
-    --ring:                  216 62% 60%;
+    --destructive:           9 76% 62%;     /* coral lift */
+    --destructive-foreground: 0 0% 100%;
+
+    --border:                218 33% 18%;   /* line #1E2A3C */
+    --input:                 218 32% 24%;   /* line-2 #2A3A52 */
+    --ring:                  229 84% 65%;
   }
 
   * {

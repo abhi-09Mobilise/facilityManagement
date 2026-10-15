@@ -4,6 +4,7 @@
 import { Building2, DoorOpen, CalendarDays, Star, Coffee, TrendingUp, TrendingDown, Fingerprint } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis } from 'recharts';
 import { getKpiTiles, type KpiTile } from '../sampleData';
+import { useThemeMode } from '@/context/ThemeContext';
 
 // Turn a label like "Bookings · 30 days" into a safe SVG id fragment.
 // url(#...) refs break if the id contains spaces or non-ascii characters,
@@ -13,12 +14,12 @@ function slug(label: string): string {
 }
 
 const iconFor: Record<string, { Icon: React.ElementType; bg: string; fg: string }> = {
-  'Total facilities':       { Icon: Building2,    bg: 'bg-blue-50',   fg: 'text-blue-600' },
-  'Booked right now':       { Icon: DoorOpen,     bg: 'bg-orange-50', fg: 'text-orange-600' },
-  'Bookings · 30 days':     { Icon: CalendarDays, bg: 'bg-emerald-50',fg: 'text-emerald-600' },
-  'Average feedback':       { Icon: Star,         bg: 'bg-amber-50',  fg: 'text-amber-600' },
-  'Pantry orders':          { Icon: Coffee,       bg: 'bg-rose-50',   fg: 'text-rose-600' },
-  'Biometric mismatches':   { Icon: Fingerprint,  bg: 'bg-slate-100', fg: 'text-slate-500' },
+  'Total facilities':       { Icon: Building2,    bg: 'bg-blue-50 dark:bg-blue-950/40',   fg: 'text-blue-600 dark:text-blue-400' },
+  'Booked right now':       { Icon: DoorOpen,     bg: 'bg-orange-50 dark:bg-orange-950/40', fg: 'text-orange-600 dark:text-orange-400' },
+  'Bookings · 30 days':     { Icon: CalendarDays, bg: 'bg-emerald-50 dark:bg-emerald-950/40',fg: 'text-emerald-600 dark:text-emerald-400' },
+  'Average feedback':       { Icon: Star,         bg: 'bg-amber-50 dark:bg-amber-950/40',  fg: 'text-amber-600 dark:text-amber-400' },
+  'Pantry orders':          { Icon: Coffee,       bg: 'bg-rose-50 dark:bg-rose-950/40',   fg: 'text-rose-600 dark:text-rose-400' },
+  'Biometric mismatches':   { Icon: Fingerprint,  bg: 'bg-slate-100 dark:bg-slate-800', fg: 'text-slate-500 dark:text-slate-400' },
 };
 
 const sparkColorFor: Record<string, string> = {
@@ -29,8 +30,16 @@ const sparkColorFor: Record<string, string> = {
   'Pantry orders':          '#f43f5e',
 };
 
-export function KpiTiles() {
-  const tiles = getKpiTiles();
+interface KpiTilesProps {
+  // Overlay keyed by tile label. Any field present here overrides the
+  // mock value for that specific tile (e.g. live `summary.total_facilities`
+  // from dashboardsApi overrides the sample '48'). Missing labels fall
+  // back to sample values.
+  liveOverlay?: Record<string, Partial<KpiTile>>;
+}
+
+export function KpiTiles({ liveOverlay }: KpiTilesProps = {}) {
+  const tiles = getKpiTiles(liveOverlay);
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
       {tiles.map((t) => <Tile key={t.label} tile={t} />)}
@@ -39,8 +48,10 @@ export function KpiTiles() {
 }
 
 function Tile({ tile }: { tile: KpiTile }) {
-  const { Icon, bg, fg } = iconFor[tile.label] ?? { Icon: Building2, bg: 'bg-slate-50', fg: 'text-slate-600' };
+  const { Icon, bg, fg } = iconFor[tile.label] ?? { Icon: Building2, bg: 'bg-slate-50 dark:bg-slate-800', fg: 'text-slate-600 dark:text-slate-400' };
   const sparkColor = sparkColorFor[tile.label] ?? '#64748b';
+  const { mode } = useThemeMode();
+  const dotStroke = mode === 'dark' ? '#141E2E' : 'white';
   const sparkData = tile.spark.map((v, i) => ({ i, v }));
   const gradientId = `spark-${slug(tile.label)}`;
   const lastIndex = sparkData.length - 1;
@@ -74,7 +85,7 @@ function Tile({ tile }: { tile: KpiTile }) {
         cy={props.cy}
         r={2.5}
         fill={sparkColor}
-        stroke="white"
+        stroke={dotStroke}
         strokeWidth={1.5}
       />
     );
@@ -85,14 +96,14 @@ function Tile({ tile }: { tile: KpiTile }) {
   const isTotalFacilities = tile.label === 'Total facilities';
 
   return (
-    <div className="relative rounded-2xl bg-white border border-slate-200/70 shadow-sm p-4 overflow-hidden flex flex-col">
+    <div className="relative rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 shadow-sm p-4 overflow-hidden flex flex-col">
       <div className="flex items-start justify-between">
         <div className="min-w-0">
-          <div className="text-[11px] font-medium text-slate-500">{tile.label}</div>
+          <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{tile.label}</div>
           <div className="mt-2 flex items-baseline gap-1.5">
-            <div className={'text-3xl font-bold tracking-tight ' + (tile.valueMuted ? 'text-slate-400' : 'text-slate-900')}>{tile.value}</div>
-            {tile.label === 'Average feedback' && <span className="text-slate-400 text-sm">/ 5</span>}
-            {tile.label === 'Booked right now' && <span className="text-slate-400 text-sm">/ 48</span>}
+            <div className={'text-3xl font-bold tracking-tight ' + (tile.valueMuted ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100')}>{tile.value}</div>
+            {tile.label === 'Average feedback' && <span className="text-slate-400 dark:text-slate-500 text-sm">/ 5</span>}
+            {tile.label === 'Booked right now' && <span className="text-slate-400 dark:text-slate-500 text-sm">/ 48</span>}
           </div>
         </div>
         <div className={`h-8 w-8 rounded-lg ${bg} ${fg} flex items-center justify-center shrink-0`}>
@@ -101,14 +112,14 @@ function Tile({ tile }: { tile: KpiTile }) {
       </div>
 
       {tile.trend && (
-        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold">
+        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold">
           {tile.trend.direction === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
           {tile.trend.percent.toFixed(1)}%
         </div>
       )}
 
       {tile.secondary && (
-        <div className="mt-1 text-[11px] text-slate-500 leading-tight">{tile.secondary}</div>
+        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-tight">{tile.secondary}</div>
       )}
 
       {/* Sparkline / mini-chart area at the bottom. mt-auto anchors every
@@ -147,12 +158,12 @@ function StackedSiteBar() {
   const total = parts.reduce((s, p) => s + p.count, 0);
   return (
     <div className="flex flex-col justify-end gap-1.5 h-full">
-      <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-100">
+      <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
         {parts.map((p) => (
           <div key={p.site} style={{ width: `${(p.count / total) * 100}%`, background: p.color }} />
         ))}
       </div>
-      <div className="text-[10px] text-slate-500 leading-tight">
+      <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
         Mumbai 18 · Pune 14 · Bengaluru 16
       </div>
     </div>

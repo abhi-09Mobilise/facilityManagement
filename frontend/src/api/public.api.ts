@@ -94,4 +94,31 @@ export const publicApi = {
     pub.get<{ status: boolean; data?: FacilityDetailPayload; msg?: string }>(
       `/public/t/${encodeURIComponent(slug)}/facilities/${id}`
     ).then((r) => r.data),
+  // Email-driven feedback — token encodes bookingId + userId, signed by
+  // the backend. No auth required; token IS the proof of identity.
+  getRatingBooking: (token: string) =>
+    pub.get<{
+      status: boolean;
+      msg?: string;
+      data?: {
+        booking: {
+          id: number;
+          facility_name: string;
+          facility_type: string;
+          site_name: string | null;
+          start_at: string;
+          end_at: string;
+        };
+        existing_rating: {
+          stars: number;
+          comment: string | null;
+          tags: string[];
+        } | null;
+      };
+    }>(`/public/ratings/${encodeURIComponent(token)}`, { validateStatus: () => true })
+      .then((r) => r.data),
+  submitRating: (token: string, payload: { stars: number; comment?: string; tags?: string[] }) =>
+    pub.post<{ status: boolean; msg?: string }>(
+      `/public/ratings/${encodeURIComponent(token)}`, payload, { validateStatus: () => true }
+    ).then((r) => r.data),
 };

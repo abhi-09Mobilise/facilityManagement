@@ -22,6 +22,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import BookingsTable from '@/pages/facility/components/BookingsTable';
+import RatePastExperiences from './RatePastExperiences';
 
 function startOfToday(): Date {
   const d = new Date();
@@ -159,7 +160,10 @@ export default function MyBookingsPage() {
           <Loader2 className="h-6 w-6 animate-spin text-brand-navy" />
         </div>
       ) : (
-        <BookingsTable upcoming={upcoming} past={past} onCancel={handleCancel} />
+        <>
+          <BookingsTable upcoming={upcoming} past={past} onCancel={handleCancel} />
+          <RatePastExperiences bookings={bookings} />
+        </>
       )}
     </div>
   );

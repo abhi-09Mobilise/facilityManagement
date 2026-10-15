@@ -27,18 +27,23 @@ export default {
         card: '0 1px 2px rgba(15,27,45,.06), 0 6px 20px -8px rgba(15,27,45,.12)',
       },
       colors: {
-        // SoCampus Desk prototype palette (source of truth: UI prototype HTML)
-        ink:   { DEFAULT: '#0F1B2D', 2: '#172640' },
-        paper: '#F2F4F8',
-        line:  { DEFAULT: '#E2E6EE', 2: '#CBD2DE' },
-        inktext: '#1C2433',
-        mutedx: '#667089',
-        faint:  '#98A2B8',
-        indigo: { DEFAULT: '#3657E8', soft: '#E7ECFF', ink: '#1E3AB5' },
-        teal:   { DEFAULT: '#0E8C7F', soft: '#DCF3EE', ink: '#0A6B61' },
-        amber:  { DEFAULT: '#D98A0B', soft: '#FFF0D3', ink: '#9A6100' },
-        coral:  { DEFAULT: '#D8432A', soft: '#FBE4DF', ink: '#A42E1B' },
-        violet: { DEFAULT: '#7A3BE8', soft: '#EFE6FF' },
+        // SoCampus Desk prototype palette — now wired to CSS variables so
+        // the whole palette flips with the `.dark` class on <html>. Values
+        // live in src/styles/globals.css (both :root and .dark blocks).
+        // Note: Tailwind's `/opacity` modifier doesn't work with var() refs;
+        // for the few places that need opacity on a brand token, use an
+        // explicit hex (`bg-[#3657E8]/30`) or add a channel-RGB var.
+        ink:   { DEFAULT: 'var(--ink)',     2: 'var(--ink-2)' },
+        paper: 'var(--paper)',
+        line:  { DEFAULT: 'var(--line)',    2: 'var(--line-2)' },
+        inktext: 'var(--text)',
+        mutedx: 'var(--muted-x)',
+        faint:  'var(--faint)',
+        indigo: { DEFAULT: 'var(--indigo)', soft: 'var(--indigo-soft)', ink: 'var(--indigo-ink)' },
+        teal:   { DEFAULT: 'var(--teal)',   soft: 'var(--teal-soft)',   ink: 'var(--teal-ink)' },
+        amber:  { DEFAULT: 'var(--amber)',  soft: 'var(--amber-soft)',  ink: 'var(--amber-ink)' },
+        coral:  { DEFAULT: 'var(--coral)',  soft: 'var(--coral-soft)',  ink: 'var(--coral-ink)' },
+        violet: { DEFAULT: 'var(--violet)', soft: 'var(--violet-soft)' },
         // Legacy brand aliases -> remapped to the new palette so every
         // existing `bg-brand-navy` / `bg-brand-surface` class restyles
         // itself without touching page markup.
