@@ -88,7 +88,7 @@ export function PeakBookingTimes({ liveOverlay }: Props = {}) {
           {filterOpen && (
             <ul
               role="listbox"
-              className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 shadow-lg z-20 py-1 text-sm"
+              className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg z-20 py-1 text-sm"
             >
               {FACILITY_TYPES.map((t) => {
                 const selected = filterType === t;
@@ -102,8 +102,8 @@ export function PeakBookingTimes({ liveOverlay }: Props = {}) {
                       className={
                         'w-full text-left px-3 py-1.5 transition-colors ' +
                         (selected
-                          ? 'bg-slate-100 text-slate-900 dark:text-slate-100 font-medium'
-                          : 'text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700')
+                          ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-medium'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700')
                       }
                     >
                       {t}

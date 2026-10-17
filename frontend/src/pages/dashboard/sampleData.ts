@@ -69,11 +69,19 @@ export interface KpiTile {
   label: string;
   value: string;
   // When true the big value renders in a muted colour — used for tiles
-  // whose metric isn't live yet (e.g. the Phase-2 biometric integration).
+  // whose metric isn't live yet.
   valueMuted?: boolean;
   secondary?: string;
   trend?: { seriesKey: string; direction: 'up' | 'down'; percent: number; color: string };
   spark: number[];
+  // Optional denominator rendered as "value / max" (e.g. 0 / 283). Backed
+  // by the real total-facilities count when the overlay sets it; omitted
+  // when unknown.
+  max?: number;
+  // Per-site breakdown for the stacked bar inside the "Total facilities"
+  // tile. Comes from the live facilities list grouped by site. When
+  // omitted the stacked bar renders empty rather than fabricating labels.
+  siteBreakdown?: { name: string; count: number; color: string }[];
 }
 
 export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile[] {
@@ -83,8 +91,7 @@ export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile
     { label: 'Bookings · 30 days',  value: '4,819', trend: { seriesKey: 'bookings', direction: 'up', percent: 12.6, color: '#16a34a' }, secondary: 'vs previous 30 days', spark: [120, 180, 90, 210, 160, 170, 220, 150, 190, 230, 180, 210] },
     { label: 'Average feedback',    value: '4.1',   secondary: '1,012 reviews', spark: [3.9, 4.0, 4.0, 3.9, 4.0, 4.1, 4.0, 4.2, 4.1, 4.1] },
     { label: 'Pantry orders',       value: '768',   secondary: '19 per 100 check-ins', spark: [20, 24, 18, 30, 28, 25, 32, 20, 26, 30, 22, 28] },
-    // Phase-2 placeholder — muted dash + biometric integration subtitle.
-    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'connects with the biometric integration (Phase 2)', spark: [] },
+    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'Last 30 days', spark: [] },
   ];
   // Honest empty state — labels + "—" so cards keep their layout but
   // show no fabricated numbers. The live overlay then fills in real
@@ -95,7 +102,7 @@ export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile
     { label: 'Bookings · 30 days',  value: '—', valueMuted: true, secondary: '', spark: [] },
     { label: 'Average feedback',    value: '—', valueMuted: true, secondary: '', spark: [] },
     { label: 'Pantry orders',       value: '—', valueMuted: true, secondary: '', spark: [] },
-    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'connects with the biometric integration (Phase 2)', spark: [] },
+    { label: 'Biometric mismatches',value: '—', valueMuted: true, secondary: 'Last 30 days', spark: [] },
   ];
   const base = USE_SAMPLE_FALLBACK ? sample : empty;
   if (!overlay) return base;

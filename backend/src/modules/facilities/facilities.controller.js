@@ -17,16 +17,21 @@ const { scopeOrgWhere } = require('../../utils/orgScope');
 const deskLayout = require('../../utils/deskLayout');
 
 // Chair ids referenced by this facility's future bookings (pending/approved).
-// Used to refuse layout saves that would leave bookings.desk_id dangling.
+// Used to refuse layout saves that would leave booked desks dangling.
+// Reads from the booking_desks junction table (migration 053) so pre-split
+// legacy data + new one-row-per-desk inserts are both covered.
 async function futureBookedDeskIds(facilityId) {
   const rows = await query(
-    "SELECT desk_id FROM `bookings` " +
-    " WHERE facility_id = ? AND desk_id IS NOT NULL AND trash = 0 " +
-    "   AND status IN ('pending','approved') AND end_at >= NOW()",
+    "SELECT DISTINCT bd.desk_id FROM `booking_desks` bd " +
+    "  INNER JOIN `bookings` b ON b.id = bd.booking_id " +
+    " WHERE b.facility_id = ? AND b.trash = 0 " +
+    "   AND b.status IN ('pending','approved') AND b.end_at >= NOW()",
     [facilityId]
   );
   const out = new Set();
-  rows.forEach((r) => deskLayout.splitBookingDeskIds(r.desk_id).forEach((id) => out.add(id)));
+  for (const r of rows) {
+    if (r.desk_id) out.add(String(r.desk_id).trim());
+  }
   return [...out];
 }
 
@@ -114,8 +119,43 @@ exports.list = asyncHandler(async function (req, res) {
     params
   );
 
+  // BUG-27 fix: `layout_json.imageUrl` holds a base64-encoded floor plan
+  // image — ~145 KB per facility. The LIST payload is used by cards + the
+  // chair picker, which both need the object coordinates but NOT the
+  // background image. Stripping imageUrl here keeps the chair picker
+  // functional while cutting response size by ~95%. The full image is
+  // still available from getOne (facility detail) for the editor.
+  for (const r of rows) {
+    r.layout_json = stripLayoutImage(r.layout_json);
+  }
+
   return ok(res, { data: rows, total: total, current_page: page, per_page: limit });
 });
+
+// Removes the heavy base64 imageUrl from a facility's layout_json while
+// preserving everything else (objects/chairs, dimensions, mode). Accepts
+// either a JSON string or a parsed object; always returns the same type
+// it was given so downstream serialisation is unchanged.
+function stripLayoutImage(raw) {
+  if (!raw) return raw;
+  try {
+    const wasString = typeof raw === 'string';
+    const obj = wasString ? JSON.parse(raw) : raw;
+    if (obj && typeof obj === 'object' && 'imageUrl' in obj) {
+      // Only strip inline data URLs — if it's an https:// path, keep it
+      // (that's a cheap reference, not a payload bomb).
+      const url = obj.imageUrl;
+      if (typeof url === 'string' && url.startsWith('data:')) {
+        obj.imageUrl = null;
+        obj._imageStripped = true;  // hint for the frontend to request detail if needed
+      }
+    }
+    return wasString ? JSON.stringify(obj) : obj;
+  } catch {
+    // Malformed JSON — return as-is; the frontend already handles that path.
+    return raw;
+  }
+}
 
 exports.getOne = asyncHandler(async function (req, res) {
   const id = intOrNull(req.params.id);
@@ -140,6 +180,21 @@ exports.create = asyncHandler(async function (req, res) {
   if (!b.type || !VALID_TYPES.includes(b.type))
                                         return fail(res, 'type is required and must be one of: ' + VALID_TYPES.join(', '), 422);
   if (!b.site_id)                       return fail(res, 'site_id is required', 422);
+
+  // BUG-05 fix: numeric sanity. The frontend caps these, but a direct API
+  // caller could still POST negatives or offline > capacity, which would
+  // break availability math (seats_remaining going negative, etc.).
+  const capCheck = intOrNull(b.capacity);
+  if (capCheck !== null && capCheck < 0) {
+    return fail(res, 'capacity must be zero or greater', 422);
+  }
+  const offlineCheck = intOrNull(b.offline_capacity);
+  if (offlineCheck !== null && offlineCheck < 0) {
+    return fail(res, 'offline_capacity must be zero or greater', 422);
+  }
+  if (capCheck !== null && offlineCheck !== null && offlineCheck > capCheck) {
+    return fail(res, 'offline_capacity cannot exceed capacity', 422);
+  }
 
   const site = await assertOwnership(req, 'sites', intOrNull(b.site_id));
   if (!site.ok) return fail(res, site.msg, site.status);
@@ -280,6 +335,22 @@ exports.update = asyncHandler(async function (req, res) {
     return fail(res, 'type must be one of: ' + VALID_TYPES.join(', '), 422);
   }
 
+  // BUG-05 fix: mirror create-flow numeric sanity on update too. Also
+  // cross-check offline against the EFFECTIVE capacity (new value if sent,
+  // otherwise the existing row's capacity).
+  if (b.capacity !== undefined) {
+    const n = intOrNull(b.capacity);
+    if (n !== null && n < 0) return fail(res, 'capacity must be zero or greater', 422);
+  }
+  if (b.offline_capacity !== undefined) {
+    const n = intOrNull(b.offline_capacity);
+    if (n !== null && n < 0) return fail(res, 'offline_capacity must be zero or greater', 422);
+    const effectiveCap = b.capacity !== undefined ? (intOrNull(b.capacity) || 0) : (r.row.capacity || 0);
+    if (n !== null && n > effectiveCap) {
+      return fail(res, 'offline_capacity cannot exceed capacity', 422);
+    }
+  }
+
   // Allow nulling facility_approver_user_id by passing null explicitly.
   // Distinguish "not provided" (undefined) from "set to null".
   const hasApprover = Object.prototype.hasOwnProperty.call(b, 'facility_approver_user_id');
@@ -337,18 +408,17 @@ exports.update = asyncHandler(async function (req, res) {
     // is referenced by an active (not cancelled / not trashed) booking.
     // This preserves the historical link — the admin can either keep the
     // old id in the layout OR cancel the affected bookings first.
+    // Reads via the booking_desks junction (migration 053).
     const activeBookings = await query(
-      "SELECT desk_id FROM `bookings` " +
-      " WHERE facility_id = ? AND trash = 0 " +
-      "   AND desk_id IS NOT NULL " +
-      "   AND status IN ('pending','approved','completed')",
+      "SELECT DISTINCT bd.desk_id FROM `booking_desks` bd " +
+      "  INNER JOIN `bookings` b ON b.id = bd.booking_id " +
+      " WHERE b.facility_id = ? AND b.trash = 0 " +
+      "   AND b.status IN ('pending','approved','completed')",
       [id]
     );
     const claimedInBookings = new Set();
     for (const row of activeBookings) {
-      String(row.desk_id || '')
-        .split(',').map((s) => s.trim()).filter(Boolean)
-        .forEach((cid) => claimedInBookings.add(cid));
+      if (row.desk_id) claimedInBookings.add(String(row.desk_id).trim());
     }
     const layoutSet = new Set(chairIds);
     for (const cid of claimedInBookings) {
@@ -456,6 +526,18 @@ exports.replaceHours = asyncHandler(async function (req, res) {
     if (!h.open_time || !h.close_time) {
       return fail(res, 'open_time and close_time are required for every row', 422);
     }
+    // BUG-05 fix: close_time must be strictly later than open_time. A
+    // close < open row would silently invert the operating window and let
+    // all day-time bookings slip through the hours-guard check.
+    if (String(h.close_time) <= String(h.open_time)) {
+      return fail(res, 'close_time must be after open_time for every row', 422);
+    }
+    // Slot size sanity — must be positive (0 would divide-by-zero in the
+    // slot-grid alignment check downstream).
+    const slot = intOrNull(h.slot_minutes);
+    if (slot !== null && slot <= 0) {
+      return fail(res, 'slot_minutes must be greater than zero', 422);
+    }
   }
 
   await withTransaction(async function (conn) {
@@ -491,8 +573,9 @@ exports._loadChain = loadChain;
 
 // F09 - Chair delete guard.
 // GET /api/facilities/:id/chair-bookings?chair_id=C-03
-// Counts active future bookings holding the chair (single or comma-joined
-// desk_id list). Cancelled / rejected / past bookings don't count.
+// Counts active future bookings holding the chair. Uses the booking_desks
+// junction table (migration 053) — a plain `=` match now works instead of
+// the old FIND_IN_SET on the legacy comma-string column.
 exports.chairBookings = asyncHandler(async function (req, res) {
   const id = intOrNull(req.params.id);
   if (id === null) return fail(res, 'Invalid id', 400);
@@ -504,11 +587,12 @@ exports.chairBookings = asyncHandler(async function (req, res) {
 
   const rows = await query(
     'SELECT COUNT(*) AS cnt ' +
-    '  FROM `bookings` ' +
-    ' WHERE facility_id = ? AND trash = 0 ' +
-    "   AND status IN ('pending','approved') " +
-    "   AND end_at > NOW() " +
-    "   AND FIND_IN_SET(?, REPLACE(IFNULL(desk_id, ''), ' ', '')) > 0",
+    '  FROM `booking_desks` bd ' +
+    '  INNER JOIN `bookings` b ON b.id = bd.booking_id ' +
+    ' WHERE b.facility_id = ? AND b.trash = 0 ' +
+    "   AND b.status IN ('pending','approved') " +
+    '   AND b.end_at > NOW() ' +
+    '   AND bd.desk_id = ?',
     [id, chairId]
   );
   return ok(res, { count: Number(rows[0]?.cnt || 0), chair_id: chairId });

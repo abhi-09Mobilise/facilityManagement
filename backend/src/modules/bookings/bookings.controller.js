@@ -300,7 +300,7 @@ async function checkAvailability(facility, startAt, endAt, needAttendees = 1, op
 // day_of_week is 0=Sun..6=Sat; MySQL DAYOFWEEK() is 1=Sun..7=Sat, hence -1.
 async function checkOperatingHours(facilityId, startAt, endAt) {
   const rows = await query(
-    'SELECT open_time, close_time, ' +
+    'SELECT open_time, close_time, slot_minutes, ' +
     '       (DATE(?) = DATE(?)) AS same_day, ' +
     '       (TIME(?) >= open_time AND TIME(?) <= close_time) AS within ' +
     '  FROM `facility_operating_hours` ' +
@@ -323,7 +323,49 @@ async function checkOperatingHours(facilityId, startAt, endAt) {
     const c = String(r.close_time).slice(0, 5);
     return { ok: false, msg: `This facility is open ${o}–${c} on that day. Pick a time within opening hours.` };
   }
+  // BUG-09 fix: enforce slot-grid alignment. If the facility uses 30-min
+  // slots then both start and end minutes must land on a boundary measured
+  // from the configured open_time (e.g. 09:00 → 09:30, 10:00 …). Rejects
+  // off-grid picks like 10:07–10:19 that the frontend would never offer
+  // but a direct API client could still POST.
+  const slotMin = Number(r.slot_minutes) || 0;
+  if (slotMin > 0 && Number(r.same_day) === 1) {
+    const openMins = timeToMinutes(String(r.open_time));
+    const startMins = timeToMinutes(timeOfIsoDt(startAt));
+    const endMins = timeToMinutes(timeOfIsoDt(endAt));
+    if (startMins === null || endMins === null || openMins === null) {
+      return { ok: false, msg: 'Invalid start/end time format.' };
+    }
+    const startOff = (startMins - openMins) % slotMin;
+    const endOff = (endMins - openMins) % slotMin;
+    if (startOff !== 0 || endOff !== 0) {
+      return {
+        ok: false,
+        msg: `Booking times must align to the ${slotMin}-minute slot grid for this facility.`,
+      };
+    }
+  }
   return { ok: true };
+}
+
+// Helpers for slot-grid alignment check above.
+function timeToMinutes(hhmmss) {
+  if (!hhmmss) return null;
+  const parts = String(hhmmss).split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+function timeOfIsoDt(dt) {
+  // Accepts 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS' and returns 'HH:MM'.
+  if (!dt) return null;
+  const s = String(dt);
+  const sep = s.indexOf('T') >= 0 ? 'T' : ' ';
+  const timePart = s.split(sep)[1] || '';
+  return timePart.slice(0, 5) || null;
 }
 
 // ---------- check ----------------------------------------------------
@@ -358,21 +400,21 @@ exports.check = asyncHandler(async function (req, res) {
   // F09 - which desk ids are already taken in this exact window. Used by the
   // booker UI to grey out unavailable chairs in the layout picker.
   //
-  // desk_id may be a single id ("C-03") or a comma-joined list ("C-03,C-04")
-  // when the booker claimed several chairs at once. Split + dedupe here so
-  // the UI gets the full set.
+  // Reads from the `booking_desks` junction table (one row per claimed desk).
+  // Pre-migration bookings are mirrored into the junction by migration 053's
+  // backfill, so this query covers both legacy and new rows.
   const occupiedRows = await query(
-    'SELECT desk_id ' +
-    '  FROM `bookings` ' +
-    ' WHERE facility_id = ? AND trash = 0 ' +
-    "   AND status IN ('pending', 'approved', 'completed') " +
-    '   AND desk_id IS NOT NULL ' +
-    '   AND start_at < ? AND end_at > ?',
+    'SELECT DISTINCT bd.desk_id ' +
+    '  FROM `booking_desks` bd ' +
+    '  INNER JOIN `bookings` b ON b.id = bd.booking_id ' +
+    ' WHERE b.facility_id = ? AND b.trash = 0 ' +
+    "   AND b.status IN ('pending', 'approved', 'completed') " +
+    '   AND b.start_at < ? AND b.end_at > ?',
     [facilityId, endAt, startAt]
   );
   const occupiedSet = new Set();
   for (const r of occupiedRows) {
-    String(r.desk_id || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => occupiedSet.add(id));
+    if (r.desk_id) occupiedSet.add(String(r.desk_id).trim());
   }
   const occupied_desks = Array.from(occupiedSet);
 
@@ -387,6 +429,143 @@ exports.check = asyncHandler(async function (req, res) {
     occupied_desks,
   });
 });
+
+// ---------- day availability (BUG-28 batch) ----------------------------
+//
+// GET /api/bookings/day?facility_id=X&date=YYYY-MM-DD&attendees=N
+//
+// Returns per-slot availability for every slot on the requested day in a
+// SINGLE round-trip. Replaces the old pattern of firing N parallel
+// /bookings/check calls (one per slot) that was flagged as an N+1 by the
+// QA report.
+//
+// Shape:
+//   {
+//     facility_id, date,
+//     mode: 'exclusive' | 'shared',
+//     capacity: number,
+//     slots: [{ start: 'HH:MM', end: 'HH:MM', conflict, seats_taken,
+//               seats_remaining }, ...]
+//   }
+exports.dayAvailability = asyncHandler(async function (req, res) {
+  const facilityId = intOrNull(req.query.facility_id);
+  const date = String(req.query.date || '').trim();
+  const attendees = Math.max(1, intOrNull(req.query.attendees) || 1);
+  if (facilityId === null) return fail(res, 'facility_id is required', 422);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail(res, 'date must be YYYY-MM-DD', 422);
+
+  // Facility metadata.
+  const facRows = await query(
+    'SELECT id, capacity, shared_booking FROM `facilities` WHERE id = ? AND trash = 0 AND status = 1 LIMIT 1',
+    [facilityId]
+  );
+  if (facRows.length === 0) return notFound(res, 'Facility not found');
+  const facility = facRows[0];
+  const mode = facility.shared_booking ? 'shared' : 'exclusive';
+  const capacity = Number(facility.capacity) || 0;
+
+  // Operating hours for the requested weekday.
+  const hoursRows = await query(
+    'SELECT open_time, close_time, slot_minutes ' +
+    '  FROM `facility_operating_hours` ' +
+    ' WHERE facility_id = ? AND day_of_week = DAYOFWEEK(?) - 1 LIMIT 1',
+    [facilityId, date]
+  );
+  if (hoursRows.length === 0) {
+    return ok(res, { facility_id: facilityId, date, mode, capacity, slots: [], closed: true });
+  }
+  const h = hoursRows[0];
+  const slotMin = Math.max(5, Number(h.slot_minutes) || 30);
+  const openMin = _toMinutes(String(h.open_time));
+  const closeMin = _toMinutes(String(h.close_time));
+  if (openMin == null || closeMin == null || closeMin <= openMin) {
+    return ok(res, { facility_id: facilityId, date, mode, capacity, slots: [], closed: true });
+  }
+
+  // All active bookings for this facility on this date — one query.
+  const dayStart = `${date} 00:00:00`;
+  const dayEnd = `${date} 23:59:59`;
+  const bookingRows = await query(
+    'SELECT start_at, end_at, attendee_count ' +
+    '  FROM `bookings` ' +
+    ' WHERE facility_id = ? AND trash = 0 ' +
+    "   AND status IN ('pending', 'approved', 'completed') " +
+    '   AND start_at < ? AND end_at > ?',
+    [facilityId, dayEnd, dayStart]
+  );
+
+  // Precompute each booking's start/end in minutes-since-midnight so slot
+  // overlap checks stay cheap in the loop below.
+  const liveBookings = bookingRows
+    .map((b) => ({
+      startMin: _dtToMinutesOnDate(b.start_at, date),
+      endMin: _dtToMinutesOnDate(b.end_at, date),
+      seats: Math.max(1, Number(b.attendee_count) || 1),
+    }))
+    .filter((b) => b.startMin !== null && b.endMin !== null);
+
+  // Walk the open window one slot at a time.
+  const slots = [];
+  for (let m = openMin; m + slotMin <= closeMin; m += slotMin) {
+    const slotStart = m;
+    const slotEnd = m + slotMin;
+    let seatsTaken = 0;
+    for (const lb of liveBookings) {
+      if (lb.startMin < slotEnd && lb.endMin > slotStart) {
+        seatsTaken += lb.seats;
+      }
+    }
+    const seatsRemaining = Math.max(0, capacity - seatsTaken);
+    let conflict;
+    if (mode === 'shared') {
+      conflict = capacity > 0 && (seatsTaken + attendees) > capacity;
+    } else {
+      conflict = seatsTaken > 0;
+    }
+    slots.push({
+      start: _toHHMM(slotStart),
+      end: _toHHMM(slotEnd),
+      conflict,
+      seats_taken: seatsTaken,
+      seats_remaining: seatsRemaining,
+    });
+  }
+
+  return ok(res, { facility_id: facilityId, date, mode, capacity, slots, closed: false });
+});
+
+// Local helpers for the batch endpoint — kept adjacent to the only caller
+// so the main controller keeps its tiny-helper discipline.
+function _toMinutes(hhmmss) {
+  if (!hhmmss) return null;
+  const parts = String(hhmmss).split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+function _toHHMM(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function _dtToMinutesOnDate(dt, date) {
+  if (!dt) return null;
+  const s = String(dt);
+  // "YYYY-MM-DD HH:MM:SS" or ISO with T
+  const sep = s.indexOf('T') >= 0 ? 'T' : ' ';
+  const [day, timePart] = s.split(sep);
+  if (!day || !timePart) return null;
+  // Bookings that span days (overnight) are clipped to the requested date:
+  //   starts before the day → 0 min
+  //   ends after the day    → 24*60 min
+  if (day < date) return 0;
+  if (day > date) return 24 * 60;
+  return _toMinutes(timePart);
+}
 
 // ---------- create ----------------------------------------------------
 
@@ -501,6 +680,14 @@ exports.create = asyncHandler(async function (req, res) {
       const VALID_CHANNELS = ['portal', 'app', 'qr', 'tablet'];
       const bookingChannel = VALID_CHANNELS.includes(b.channel) ? b.channel : 'portal';
 
+      // F09 — desk IDs now go into the `booking_desks` junction table, one
+      // row per desk. `bookings.desk_id` is kept NULL on new rows so the
+      // VARCHAR(64) column can never overflow regardless of how many desks
+      // the booker claims. See migration 053_booking_desks_junction.sql.
+      const deskIdList = b.desk_id
+        ? String(b.desk_id).split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+
       const [r] = await conn.execute(
         'INSERT INTO `bookings` ' +
         '   (tenant_id, facility_id, desk_id, user_id, department_id, title, start_at, end_at, ' +
@@ -508,8 +695,9 @@ exports.create = asyncHandler(async function (req, res) {
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         [
           booker.tenant_id, facilityId,
-          // F09 - optional desk id (string from facility.layout_json.desks[].id)
-          b.desk_id ? String(b.desk_id) : null,
+          // Always NULL from this release onwards — junction table is the
+          // source of truth. Column kept nullable for backward compat only.
+          null,
           booker.id, departmentId,
           titleStr, startAt, endAt,
           b.repeat_type || 'none',
@@ -522,6 +710,15 @@ exports.create = asyncHandler(async function (req, res) {
       );
 
       const bookingId = r.insertId;
+
+      // Insert one row per selected desk. The unique key
+      // (booking_id, desk_id) silently drops accidental duplicates.
+      for (const deskId of deskIdList) {
+        await conn.execute(
+          'INSERT IGNORE INTO `booking_desks` (booking_id, desk_id) VALUES (?, ?)',
+          [bookingId, deskId]
+        );
+      }
       for (const g of guests) {
         await conn.execute(
           'INSERT INTO `booking_guests` (booking_id, fname, lname, contact_no, email) VALUES (?, ?, ?, ?, ?)',
@@ -656,19 +853,22 @@ exports.create = asyncHandler(async function (req, res) {
             }
           }
 
+          // Read other-booking desk claims from the junction table. FOR SHARE
+          // locks the matching booking rows so a concurrent insert can't
+          // race us past this check.
           const [otherRows] = await conn.execute(
-            'SELECT id, desk_id ' +
-            '  FROM `bookings` ' +
-            ' WHERE facility_id = ? AND id <> ? ' +
-            '   AND trash = 0 ' +
-            "   AND status IN ('pending', 'approved', 'completed') " +
-            '   AND desk_id IS NOT NULL ' +
-            '   AND start_at < ? AND end_at > ? FOR SHARE',
+            'SELECT DISTINCT bd.desk_id ' +
+            '  FROM `booking_desks` bd ' +
+            '  INNER JOIN `bookings` b ON b.id = bd.booking_id ' +
+            ' WHERE b.facility_id = ? AND b.id <> ? ' +
+            '   AND b.trash = 0 ' +
+            "   AND b.status IN ('pending', 'approved', 'completed') " +
+            '   AND b.start_at < ? AND b.end_at > ? FOR SHARE',
             [facilityId, bookingId, endAt, startAt]
           );
           const takenSet = new Set();
           for (const row of otherRows) {
-            String(row.desk_id || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => takenSet.add(id));
+            if (row.desk_id) takenSet.add(String(row.desk_id).trim());
           }
           const clash = claimed.find((id) => takenSet.has(id));
           if (clash) {
@@ -980,6 +1180,18 @@ exports.getOne = asyncHandler(async function (req, res) {
     return fail(res, 'Forbidden', 403);
   }
 
+  // F09 — pull claimed desks from the junction table so the response
+  // includes a clean array AND a legacy comma-joined `desk_id` for any
+  // frontend code still reading the old column shape.
+  const deskRows = await query(
+    'SELECT desk_id FROM `booking_desks` WHERE booking_id = ? ORDER BY id',
+    [id]
+  );
+  booking.desks = deskRows.map((d) => d.desk_id);
+  if (booking.desks.length > 0) {
+    booking.desk_id = booking.desks.join(',');
+  }
+
   const [guests, meals, approvals] = await Promise.all([
     query('SELECT id, fname, lname, contact_no, email FROM `booking_guests` WHERE booking_id = ?', [id]),
     query(
@@ -1012,7 +1224,7 @@ exports.cancel = asyncHandler(async function (req, res) {
   if (id === null) return fail(res, 'Invalid id', 400);
 
   const rows = await query(
-    'SELECT id, tenant_id, user_id, status FROM `bookings` WHERE id = ? AND trash = 0 LIMIT 1',
+    'SELECT id, tenant_id, user_id, status, start_at FROM `bookings` WHERE id = ? AND trash = 0 LIMIT 1',
     [id]
   );
   if (rows.length === 0) return notFound(res, 'Booking not found');
@@ -1027,6 +1239,14 @@ exports.cancel = asyncHandler(async function (req, res) {
   }
   if (booking.status === 'cancelled' || booking.status === 'completed') {
     return fail(res, `Booking is already ${booking.status}`, 422);
+  }
+  // BUG-06 fix: refuse to cancel a booking whose start time is already past.
+  // Cancelling a past booking corrupts history + utilisation analytics; the
+  // event already happened (or was missed). Compared in SQL (NOW()) so the
+  // check is immune to the Node process timezone.
+  const pastCheck = await query('SELECT (? < NOW()) AS in_past', [booking.start_at]);
+  if (Number(pastCheck[0].in_past) === 1) {
+    return fail(res, 'Past bookings cannot be cancelled.', 422);
   }
 
   await withTransaction(async function (conn) {

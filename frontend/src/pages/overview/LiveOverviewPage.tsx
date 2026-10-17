@@ -205,12 +205,12 @@ export default function LiveOverviewPage() {
         <Kpi
           label="Auto-released"
           value={<span className="text-faint">0</span>}
-          sub={<>no-show release ships with Phase 1 · alert at 20%</>}
+          sub={<>no-show release · alert at 20%</>}
         />
         <Kpi
           label="Biometric mismatches"
           value={<span className="text-faint">—</span>}
-          sub={<>connects with the biometric integration (Phase 2)</>}
+          sub={<>Last 30 days</>}
         />
       </div>
 

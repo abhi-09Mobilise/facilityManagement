@@ -38,6 +38,24 @@ export interface BookingActResult {
   booking_id?: number;
 }
 
+// BUG-28: single-call day availability. Replaces the old
+// pattern of firing one /bookings/check per slot (N+1).
+export interface DaySlotAvailability {
+  start: string;              // "HH:MM"
+  end: string;                // "HH:MM"
+  conflict: boolean;
+  seats_taken: number;
+  seats_remaining: number;
+}
+export interface DayAvailabilityResult {
+  facility_id: number;
+  date: string;               // "YYYY-MM-DD"
+  mode: 'exclusive' | 'shared';
+  capacity: number;
+  closed: boolean;
+  slots: DaySlotAvailability[];
+}
+
 export const bookingsApi = {
   list(filters: BookingListFilters = {}) {
     return api
@@ -60,6 +78,16 @@ export const bookingsApi = {
   check(params: { facility_id: number; start_at: string; end_at: string; attendees?: number }) {
     return api
       .get<ApiEnvelope<BookingCheckResult>>('/bookings/check', { params })
+      .then((r) => r.data);
+  },
+
+  // BUG-28: single-call availability for every slot in a day. Prefer this
+  // over N parallel check() calls — payload is capped (~20-50 slots), one
+  // round-trip, and the backend does the overlap math in one SQL + one
+  // in-memory pass.
+  dayAvailability(params: { facility_id: number; date: string; attendees?: number }) {
+    return api
+      .get<ApiEnvelope<DayAvailabilityResult>>('/bookings/day', { params })
       .then((r) => r.data);
   },
 

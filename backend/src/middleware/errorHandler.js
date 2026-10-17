@@ -20,8 +20,21 @@ module.exports = function errorHandler(err, req, res, next) { // eslint-disable-
   const code = err && err.code;
 
   if (code === 'ER_DUP_ENTRY') {
-    const message = err.sqlMessage.split("for")[0];
-    return res.status(409).json({ status: false, msg: message});
+    // BUG-21 fix: raw sqlMessage used to leak key names + table internals
+    // (e.g. "Duplicate entry '10-QAPUN' for key 'sites.uk_site_code'").
+    // Parse the key name instead and return a human-friendly message.
+    return res.status(409).json({
+      status: false,
+      msg: friendlyDuplicateMessage(err.sqlMessage || ''),
+    });
+  }
+
+  // Common foreign-key violation — again, friendly message vs raw SQL.
+  if (code === 'ER_NO_REFERENCED_ROW_2' || code === 'ER_ROW_IS_REFERENCED_2') {
+    return res.status(409).json({
+      status: false,
+      msg: 'This record is linked to other data and cannot be used as-is. Check related records.',
+    });
   }
 
   const status = err.status || 500;
@@ -39,3 +52,30 @@ module.exports = function errorHandler(err, req, res, next) { // eslint-disable-
   }
   return res.status(status).json({ status: false, msg });
 };
+
+/**
+ * Turn a MySQL ER_DUP_ENTRY sqlMessage into a user-friendly line.
+ *
+ * Input examples:
+ *   "Duplicate entry '10-QAPUN' for key 'sites.uk_site_code'"
+ *   "Duplicate entry 'Pune' for key 'sites.uk_tenant_site_name'"
+ *   "Duplicate entry 'john.doe@acme.com' for key 'users.uk_user_email'"
+ *
+ * Output: "A site with this code already exists." / etc.
+ */
+function friendlyDuplicateMessage(sqlMessage) {
+  const m = /Duplicate entry '([^']*)' for key '(?:[^.]+\.)?([^']+)'/i.exec(sqlMessage);
+  if (!m) return 'This value already exists. Please pick a different one.';
+  const value = m[1];
+  const key = (m[2] || '').toLowerCase();
+  // Infer the human field from the index name tail.
+  let field = 'value';
+  if (key.includes('email'))          field = 'email';
+  else if (key.includes('username'))  field = 'username';
+  else if (key.includes('slug'))      field = 'slug';
+  else if (key.includes('code'))      field = 'code';
+  else if (key.includes('name'))      field = 'name';
+  else if (key.includes('mobile'))    field = 'mobile';
+  else if (key.includes('token'))     field = 'token';
+  return `A record with this ${field} ("${value}") already exists. Please choose a different ${field}.`;
+}

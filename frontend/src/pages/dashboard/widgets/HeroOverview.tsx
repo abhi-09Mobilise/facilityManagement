@@ -2,12 +2,18 @@
 // Shows live clock, site filter dropdown, range toggle (7/30/90 days), and
 // right-side circular occupancy gauge + 3-line status breakdown.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Check, ChevronDown, Globe } from 'lucide-react';
 import { getHeroOverview, SAMPLE_DATA_BANNER, type HeroOverview as HeroOverviewData } from '../sampleData';
 import type { Site } from '@/types';
+import type { DashboardRange } from '../useLiveDashboardData';
 
-type RangeDays = 7 | 30 | 90;
+type PresetDays = 7 | 30 | 90;
+const PRESET_DAYS: readonly PresetDays[] = [7, 30, 90] as const;
+// Hard cap on the custom range to protect the backend from a stray "pick 10
+// years" that would scan half the bookings table. Two years comfortably
+// covers quarterly / annual reviews.
+const CUSTOM_MAX_DAYS = 730;
 
 interface Props {
   // Fields fetched from the real backend. Any field present here wins
@@ -21,10 +27,10 @@ interface Props {
   sites?: Site[];
   selectedSiteId?: number | null;
   onSiteChange?: (siteId: number | null) => void;
-  // Range toggle — controlled by the parent so the hook knows what to
-  // request from gantt().
-  rangeDays?: RangeDays;
-  onRangeChange?: (days: RangeDays) => void;
+  // Date-window picker — controlled by the parent so the hook knows what
+  // to request from gantt / peakTimes / etc.
+  range?: DashboardRange;
+  onRangeChange?: (next: DashboardRange) => void;
 }
 
 export function HeroOverview({
@@ -33,18 +39,32 @@ export function HeroOverview({
   sites = [],
   selectedSiteId = null,
   onSiteChange,
-  rangeDays,
+  range,
   onRangeChange,
 }: Props = {}) {
   const data = getHeroOverview(liveOverlay);
-  // Local fallback when the parent isn't controlling the range.
-  const [localRange, setLocalRange] = useState<RangeDays>(rangeDays ?? data.rangeDays);
-  const range: RangeDays = rangeDays ?? localRange;
+
+  // Local fallback when the parent isn't controlling the range (e.g. the
+  // storybook / preview harness mounts the hero standalone).
+  const [localRange, setLocalRange] = useState<DashboardRange>(
+    range ?? { kind: 'preset', days: (data.rangeDays as PresetDays) ?? 30 }
+  );
+  const activeRange: DashboardRange = range ?? localRange;
 
   const [siteOpen, setSiteOpen] = useState(false);
   const siteWrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Close dropdown on outside click.
+  // --- Custom-range popover state (open/close, draft from/to inputs). ---
+  const [customOpen, setCustomOpen] = useState(false);
+  const customWrapRef = useRef<HTMLDivElement | null>(null);
+  const todayIso = useMemo(() => isoDateLocal(new Date()), []);
+  // Draft values seed from the active range when the popover opens so the
+  // user has a sensible starting point instead of blank inputs.
+  const [draftFrom, setDraftFrom] = useState<string>('');
+  const [draftTo, setDraftTo] = useState<string>('');
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  // Close dropdowns on outside click.
   useEffect(() => {
     if (!siteOpen) return;
     function onDoc(e: MouseEvent) {
@@ -55,6 +75,16 @@ export function HeroOverview({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [siteOpen]);
 
+  useEffect(() => {
+    if (!customOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!customWrapRef.current) return;
+      if (!customWrapRef.current.contains(e.target as Node)) setCustomOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [customOpen]);
+
   // Circular gauge calculation.
   const R = 68;
   const CIRC = 2 * Math.PI * R;
@@ -63,9 +93,37 @@ export function HeroOverview({
   const selectedSite = sites.find((s) => s.id === selectedSiteId) || null;
   const siteLabel = selectedSite ? selectedSite.name : (data.siteFilter || 'All sites');
 
-  function handleRangePick(n: RangeDays) {
-    if (onRangeChange) onRangeChange(n);
-    else setLocalRange(n);
+  function emitRange(next: DashboardRange): void {
+    if (onRangeChange) onRangeChange(next);
+    else setLocalRange(next);
+  }
+
+  function handlePresetPick(days: PresetDays): void {
+    emitRange({ kind: 'preset', days });
+    setCustomOpen(false);
+  }
+
+  function openCustomPopover(): void {
+    // Seed draft inputs from the active range so the popover opens on
+    // familiar numbers rather than blank fields.
+    if (activeRange.kind === 'custom') {
+      setDraftFrom(activeRange.from);
+      setDraftTo(activeRange.to);
+    } else {
+      const to = todayIso;
+      const from = isoDateLocal(addDaysLocal(new Date(), -(activeRange.days - 1)));
+      setDraftFrom(from);
+      setDraftTo(to);
+    }
+    setDraftError(null);
+    setCustomOpen(true);
+  }
+
+  function applyCustomRange(): void {
+    const err = validateCustomRange(draftFrom, draftTo, todayIso);
+    if (err) { setDraftError(err); return; }
+    emitRange({ kind: 'custom', from: draftFrom, to: draftTo });
+    setCustomOpen(false);
   }
 
   function handleSitePick(id: number | null) {
@@ -165,21 +223,91 @@ export function HeroOverview({
               )}
             </div>
 
-            {/* Range toggle */}
-            <div className="inline-flex rounded-lg bg-white/10 p-1 text-sm border border-white/10">
-              {[7, 30, 90].map((n) => (
+            {/* Range toggle — 3 presets + Custom (opens a popover) */}
+            <div ref={customWrapRef} className="relative">
+              <div className="inline-flex rounded-lg bg-white/10 p-1 text-sm border border-white/10">
+                {PRESET_DAYS.map((n) => {
+                  const isActive = activeRange.kind === 'preset' && activeRange.days === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => handlePresetPick(n)}
+                      className={
+                        'px-3 py-1 rounded-md transition-colors ' +
+                        (isActive ? 'bg-white text-emerald-900 font-semibold' : 'text-emerald-100 hover:bg-white/10')
+                      }
+                    >
+                      {n} days
+                    </button>
+                  );
+                })}
                 <button
-                  key={n}
                   type="button"
-                  onClick={() => handleRangePick(n as RangeDays)}
+                  onClick={() => (customOpen ? setCustomOpen(false) : openCustomPopover())}
                   className={
-                    'px-3 py-1 rounded-md transition-colors ' +
-                    (range === n ? 'bg-white text-emerald-900 font-semibold' : 'text-emerald-100 hover:bg-white/10')
+                    'px-3 py-1 rounded-md transition-colors inline-flex items-center gap-1 ' +
+                    (activeRange.kind === 'custom'
+                      ? 'bg-white text-emerald-900 font-semibold'
+                      : 'text-emerald-100 hover:bg-white/10')
                   }
+                  aria-expanded={customOpen}
+                  aria-haspopup="dialog"
                 >
-                  {n} days
+                  {activeRange.kind === 'custom'
+                    ? formatCustomChip(activeRange.from, activeRange.to)
+                    : 'Custom'}
+                  <ChevronDown className={'h-3.5 w-3.5 opacity-70 transition-transform ' + (customOpen ? 'rotate-180' : '')} />
                 </button>
-              ))}
+              </div>
+
+              {customOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Pick a custom date range"
+                  className="absolute left-0 top-full mt-2 w-72 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl z-50 p-4"
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+                    Custom range
+                  </div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">From</label>
+                  <input
+                    type="date"
+                    value={draftFrom}
+                    max={draftTo || todayIso}
+                    onChange={(e) => { setDraftFrom(e.target.value); setDraftError(null); }}
+                    className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mt-3 mb-1">To</label>
+                  <input
+                    type="date"
+                    value={draftTo}
+                    min={draftFrom}
+                    max={todayIso}
+                    onChange={(e) => { setDraftTo(e.target.value); setDraftError(null); }}
+                    className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  {draftError && (
+                    <div className="mt-2 text-[11px] text-rose-600 dark:text-rose-400">{draftError}</div>
+                  )}
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCustomOpen(false)}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyCustomRange}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -252,4 +380,56 @@ function StatRow({ dotColor, count, label }: { dotColor: string; count: number; 
       <span className="text-emerald-100/80 text-xs">{label}</span>
     </div>
   );
+}
+
+// --- Custom range helpers --------------------------------------------------
+
+/** YYYY-MM-DD in local time (not UTC — matches what the date <input> uses). */
+function isoDateLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysLocal(d: Date, n: number): Date {
+  const c = new Date(d);
+  c.setDate(c.getDate() + n);
+  return c;
+}
+
+/**
+ * Validates a draft custom range. Returns a user-facing error string, or
+ * null if the pair is good to apply.
+ */
+function validateCustomRange(from: string, to: string, todayIso: string): string | null {
+  if (!from) return 'Pick a start date';
+  if (!to) return 'Pick an end date';
+  if (from > to) return 'Start date must be on or before end date';
+  if (to > todayIso) return 'End date can\'t be in the future';
+  const span = daysSpan(from, to);
+  if (span > CUSTOM_MAX_DAYS) return `Range is capped at ${CUSTOM_MAX_DAYS} days (~2 years)`;
+  return null;
+}
+
+function daysSpan(from: string, to: string): number {
+  const a = new Date(from).getTime();
+  const b = new Date(to).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return 1;
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+}
+
+/**
+ * Compact "DD MMM – DD MMM" chip for the toggle button when a custom range
+ * is active. Shows the year only when the range crosses year boundaries.
+ */
+function formatCustomChip(from: string, to: string): string {
+  const f = new Date(from);
+  const t = new Date(to);
+  if (Number.isNaN(f.getTime()) || Number.isNaN(t.getTime())) return 'Custom';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const sameYear = f.getFullYear() === t.getFullYear();
+  const left = `${f.getDate()} ${months[f.getMonth()]}${sameYear ? '' : ` ${f.getFullYear()}`}`;
+  const right = `${t.getDate()} ${months[t.getMonth()]} ${t.getFullYear()}`;
+  return `${left} – ${right}`;
 }

@@ -11,6 +11,6 @@ const { authRequired } = require('../../middleware/auth');
 router.use(authRequired);
 
 router.get('/mine/:bookingId', ctrl.mineForBooking); // check if already rated
-router.post('/',               ctrl.create);         // submit a rating
+router.post('/',ctrl.create);         // submit a rating
 
 module.exports = router;

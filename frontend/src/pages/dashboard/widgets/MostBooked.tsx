@@ -47,9 +47,9 @@ export function MostBooked({ liveOverlay }: Props = {}) {
         </button>
       </div>
 
-      <div className="mt-4 flex-1 min-h-0">
+      <div className="mt-4 flex-1 min-h-0 [&_*]:focus:outline-none [&_svg]:outline-none">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ top: 0, right: 24, bottom: 0, left: 0 }}>
+          <BarChart data={data} layout="vertical" margin={{ top: 8, right: 24, bottom: 4, left: 4 }}>
             <defs>
               <linearGradient id="g-mostBooked" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%"   stopColor="#3b82f6" />
@@ -61,10 +61,11 @@ export function MostBooked({ liveOverlay }: Props = {}) {
             <YAxis
               type="category"
               dataKey="key"
-              tick={{ fontSize: 11, fill: cc.tooltipText }}
+              tick={{ fontSize: 12, fill: cc.tick, fontWeight: 600 }}
               tickLine={false}
               axisLine={false}
-              width={75}
+              width={78}
+              tickFormatter={formatCategoryLabel}
             />
             <Tooltip
               contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${cc.grid}`, backgroundColor: cc.tooltipBg, color: cc.tooltipText }}
@@ -72,11 +73,31 @@ export function MostBooked({ liveOverlay }: Props = {}) {
               itemStyle={{ color: cc.tooltipText }}
               cursor={{ fill: cc.softBg }}
               formatter={(v: number) => [v.toLocaleString(), 'Bookings']}
+              labelFormatter={(label: string) => formatCategoryLabel(label)}
             />
-            <Bar dataKey="bookings" radius={[0, 6, 6, 0]} barSize={12} fill="url(#g-mostBooked)" />
+            <Bar dataKey="bookings" radius={[0, 6, 6, 0]} barSize={14} fill="url(#g-mostBooked)" />
           </BarChart>
         </ResponsiveContainer>
       </div>
     </div>
   );
+}
+
+// Convert raw category keys like "swimming_pool" / "conference_room" into
+// display-friendly labels ("Swimming pool", "Conference room"). Facility
+// names from the Facility toggle are already prose, so this is a no-op
+// for them. Long strings are truncated with an ellipsis so the YAxis
+// width stays bounded.
+function formatCategoryLabel(value: string): string {
+  if (!value) return '';
+  const str = String(value);
+  // Only prettify snake_case keys (e.g. "swimming_pool" → "Swimming pool").
+  // Prose names (facility names like "Gym A-93") pass through unchanged.
+  const pretty = str.includes('_')
+    ? str.replace(/_/g, ' ').replace(/\b\w/, (c) => c.toUpperCase())
+    : str;
+  // Max char budget tuned to YAxis width=78 at fontSize=12 weight=600
+  // (~6.5–7px per char). Keeps 11-char names like "Swimming po…" within
+  // bounds; shorter names show in full.
+  return pretty.length > 11 ? pretty.slice(0, 10) + '…' : pretty;
 }

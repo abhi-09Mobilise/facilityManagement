@@ -33,17 +33,22 @@ const LIGHT: Palette = {
   SHADOW: '0 1px 2px rgba(15,27,45,.06), 0 6px 20px -8px rgba(15,27,45,.12)',
 };
 
+// Dark palette — matched 1:1 with the `.dark` block in globals.css so MUI
+// surfaces (DataGrid, Dialog, Paper, Chip, OutlinedInput) share the same
+// contrast ratios as native Tailwind components. Updating one requires the
+// other to be nudged too — otherwise MUI tables will look washed out next
+// to Tailwind cards (or vice-versa).
 const DARK: Palette = {
   INK: '#E6EDF5', INK_2: '#CBD5E3',
-  PAPER: '#0B131F',
-  CARD: '#141E2E',
-  LINE: '#1E2A3C', LINE2: '#2A3A52',
-  TEXT: '#E6EDF5', MUTED: '#8A98B0',
-  INDIGO: '#5B78F0', INDIGO_INK: '#A9BAFF',
-  TEAL: '#2CB5A2', AMBER: '#E8A42E', CORAL: '#E96A52',
-  HOVER_ROW: '#1A2437',
-  SELECTED_ROW: '#1C2A52',
-  SHADOW: '0 1px 2px rgba(0,0,0,.4), 0 6px 20px -8px rgba(0,0,0,.55)',
+  PAPER: '#0A121D',
+  CARD: '#1A2538',
+  LINE: '#2A3A52', LINE2: '#3A4D6A',
+  TEXT: '#EEF2F8', MUTED: '#A1AEC3',
+  INDIGO: '#6E89F2', INDIGO_INK: '#B9C7FF',
+  TEAL: '#3BC2AE', AMBER: '#ECAE3C', CORAL: '#EC7560',
+  HOVER_ROW: '#232F45',
+  SELECTED_ROW: '#1F2E5A',
+  SHADOW: '0 1px 2px rgba(0,0,0,.5), 0 10px 24px -8px rgba(0,0,0,.7)',
 };
 
 const DISPLAY = '"Space Grotesk", "Segoe UI", Roboto, Helvetica, Arial, sans-serif';

@@ -110,12 +110,16 @@ const ROLE_LABEL: Record<Role, string> = {
 };
 
 // Prototype .tag styles: soft background + ink text per role.
+// Role chips — use CSS-var-based tokens (defined in globals.css for both
+// :root and .dark) so the colors adapt to the active theme. Hardcoded hex
+// values here previously made the super_admin text (dark purple) invisible
+// against the darkened violet-soft background in dark mode.
 const ROLE_CHIP_CLASS: Record<Role, string> = {
-  super_admin:  'bg-violet-soft text-[#5B27B8]',
+  super_admin:  'bg-violet-soft text-[#5B27B8] dark:text-violet-200',
   tenant_admin: 'bg-teal-soft text-teal-ink',
   org_admin:    'bg-indigo-soft text-indigo-ink',
   approver:     'bg-amber-soft text-amber-ink',
-  employee:     'bg-[#EDF0F5] text-mutedx',
+  employee:     'bg-[#EDF0F5] text-mutedx dark:bg-slate-700 dark:text-slate-300',
 };
 
 // Persona avatar colors, matching the prototype's people palette.

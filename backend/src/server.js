@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
+const helmet = require('helmet');
 
 const config = require('./config');
 const routes = require('./routes');
@@ -15,6 +16,26 @@ const noShowSweeper = require('./jobs/noShowSweeper'); // M12
 const feedbackMailer = require('./jobs/feedbackMailer'); // SpaceDesk feedback
 
 const app = express();
+
+// BUG-24 fix: security hardening.
+//   • `x-powered-by` header disclosed Express by default — removed so an
+//     attacker can't fingerprint the stack from a single response.
+//   • Helmet sets the standard HTTP security headers (HSTS, X-Frame-Options,
+//     X-Content-Type-Options nosniff, Referrer-Policy, X-DNS-Prefetch-Control,
+//     cross-origin isolation, etc.) with sensible defaults.
+//   • CSP left in report-only (default off) because the frontend is served
+//     from Vite and may change inline/eval needs during development — ops
+//     should enable + tune via config when the asset pipeline stabilises.
+app.disable('x-powered-by');
+app.use(helmet({
+  // Cross-Origin-Embedder-Policy breaks third-party iframes (e.g. the public
+  // rate page embeds nothing today but is likely to in the future). Leave
+  // this permissive — the other defaults are the valuable ones.
+  crossOriginEmbedderPolicy: false,
+  // Content-Security-Policy stays off here. The nginx layer in front of this
+  // backend owns CSP for the whole deployment (HTML + API).
+  contentSecurityPolicy: false,
+}));
 
 // CORS — accepts a comma-separated list in CORS_ORIGIN, or '*' for open.
 // Each entry is matched literally against the request Origin header. We also

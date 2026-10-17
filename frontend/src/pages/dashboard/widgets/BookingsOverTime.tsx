@@ -102,7 +102,7 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 function StatTile({ value, label }: { value: string; label: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200/50 p-3">
+    <div className="rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 p-3">
       <div className="text-xl font-bold text-slate-900 dark:text-slate-100">{value}</div>
       <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">{label}</div>
     </div>

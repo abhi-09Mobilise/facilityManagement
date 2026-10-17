@@ -143,11 +143,33 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
     };
   });
 
+  // Total count ignores FACILITY_LIMIT so the KPI tile shows the real
+  // tenant total even when the per-facility list is capped for chart
+  // performance. `occupied_now` runs cross-tenant across ALL facilities
+  // in scope (not just the capped list) for the same reason.
+  const totalCountRow = await query(
+    'SELECT COUNT(*) AS n FROM `facilities` f ' +
+    ' WHERE f.trash = 0 AND f.status = 1 ' + tenantClause,
+    tenantParams
+  );
+  const totalFacilities = Number((totalCountRow[0] || {}).n || 0);
+
+  const occupiedCountRow = await query(
+    'SELECT COUNT(DISTINCT b.facility_id) AS n ' +
+    '  FROM `bookings` b ' +
+    '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    " WHERE b.trash = 0 AND b.status IN ('approved', 'pending', 'completed') " +
+    '   AND b.start_at <= NOW() AND b.end_at > NOW() ' +
+    '   AND f.trash = 0 AND f.status = 1 ' + tenantClause,
+    tenantParams
+  );
+  const occupiedNow = Number((occupiedCountRow[0] || {}).n || 0);
+
   return ok(res, {
     summary: {
-      total_facilities: openRows.length,
-      occupied_now: occupiedSet.size,
-      free_now: openRows.length - occupiedSet.size,
+      total_facilities: totalFacilities,
+      occupied_now: occupiedNow,
+      free_now: Math.max(0, totalFacilities - occupiedNow),
     },
     per_facility: perFacility,
     as_of: new Date().toISOString(),

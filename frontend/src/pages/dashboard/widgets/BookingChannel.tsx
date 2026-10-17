@@ -79,7 +79,7 @@ function ChannelTile({ slice, total }: { slice: ChannelSlice; total: number }) {
   const bg = channelBg[slice.name] ?? 'bg-slate-50 dark:bg-slate-800';
   const pct = Math.round((slice.value / total) * 100);
   return (
-    <div className="rounded-lg border border-slate-200/50 p-2.5 flex items-start gap-2">
+    <div className="rounded-lg border border-slate-200/50 dark:border-slate-700/50 p-2.5 flex items-start gap-2">
       <div className={`h-7 w-7 rounded-md ${bg} flex items-center justify-center shrink-0`} style={{ color: slice.color }}>
         <Icon className="h-3.5 w-3.5" />
       </div>

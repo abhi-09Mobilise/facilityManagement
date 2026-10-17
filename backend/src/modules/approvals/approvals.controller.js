@@ -125,7 +125,7 @@ exports.decide = asyncHandler(async function (req, res) {
 
   const rows = await query(
     'SELECT ba.id, ba.booking_id, ba.stage, ba.step_id, ba.step_order, ba.approver_user_id, ba.decision, ' +
-    '       b.tenant_id ' +
+    '       b.tenant_id, b.user_id AS booker_user_id ' +
     '  FROM `booking_approvals` ba ' +
     '  INNER JOIN `bookings` b ON b.id = ba.booking_id ' +
     ' WHERE ba.id = ? LIMIT 1',
@@ -138,6 +138,13 @@ exports.decide = asyncHandler(async function (req, res) {
   // kept for support / maintenance.
   if (row.approver_user_id !== req.user.id && req.user.role !== 'super_admin') {
     return fail(res, 'Forbidden - this approval is not assigned to you', 403);
+  }
+  // BUG-11 fix: segregation of duties — the booker (requester) must never
+  // approve or reject their own booking, even if the approval chain routed
+  // the step to them. super_admin override is intentionally retained so
+  // support/maintenance teams can unblock stuck bookings.
+  if (row.booker_user_id === req.user.id && req.user.role !== 'super_admin') {
+    return fail(res, 'You cannot act on your own booking. Please ask another approver to decide.', 403);
   }
   if (row.decision !== 'pending') {
     return fail(res, `Already ${row.decision}`, 422);

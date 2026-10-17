@@ -6,7 +6,8 @@ router.use(authRequired);
 
 router.post('/',           ctrl.create);
 router.get('/',            ctrl.list);
-router.get('/check',       ctrl.check);   // pre-flight conflict probe
+router.get('/check',       ctrl.check);   // pre-flight conflict probe (single slot)
+router.get('/day',         ctrl.dayAvailability); // BUG-28: all slots for a day in one call
 router.get('/:id',         ctrl.getOne);
 router.post('/:id/cancel', ctrl.cancel);
 

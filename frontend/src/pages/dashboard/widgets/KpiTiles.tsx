@@ -103,7 +103,12 @@ function Tile({ tile }: { tile: KpiTile }) {
           <div className="mt-2 flex items-baseline gap-1.5">
             <div className={'text-3xl font-bold tracking-tight ' + (tile.valueMuted ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100')}>{tile.value}</div>
             {tile.label === 'Average feedback' && <span className="text-slate-400 dark:text-slate-500 text-sm">/ 5</span>}
-            {tile.label === 'Booked right now' && <span className="text-slate-400 dark:text-slate-500 text-sm">/ 48</span>}
+            {/* BUG-03 fix: denominator comes from the overlay's `max` (set to
+                the real total-facilities count) instead of the hardcoded
+                "/ 48". Hidden entirely when max is unknown. */}
+            {tile.label === 'Booked right now' && typeof tile.max === 'number' && (
+              <span className="text-slate-400 dark:text-slate-500 text-sm">/ {tile.max}</span>
+            )}
           </div>
         </div>
         <div className={`h-8 w-8 rounded-lg ${bg} ${fg} flex items-center justify-center shrink-0`}>
@@ -129,7 +134,7 @@ function Tile({ tile }: { tile: KpiTile }) {
           pushing its chart lower than the others). */}
       <div className="mt-auto h-12">
         {isTotalFacilities ? (
-          <StackedSiteBar />
+          <StackedSiteBar parts={tile.siteBreakdown} />
         ) : sparkData.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={sparkData} margin={{ top: 4, right: 6, bottom: 0, left: 2 }}>
@@ -149,22 +154,31 @@ function Tile({ tile }: { tile: KpiTile }) {
   );
 }
 
-function StackedSiteBar() {
-  const parts = [
-    { site: 'Mumbai', count: 18, color: '#3b82f6' },
-    { site: 'Pune',   count: 14, color: '#10b981' },
-    { site: 'B’luru', count: 16, color: '#8b5cf6' },
-  ];
-  const total = parts.reduce((s, p) => s + p.count, 0);
+function StackedSiteBar({ parts }: { parts?: { name: string; count: number; color: string }[] }) {
+  // BUG-03 fix: no more hardcoded "Mumbai 18 · Pune 14 · Bengaluru 16".
+  // When the overlay doesn't supply a breakdown (loading / empty tenant),
+  // render an empty bar + no label instead of fabricated numbers.
+  const safe = Array.isArray(parts) ? parts.filter((p) => p && p.count > 0) : [];
+  const total = safe.reduce((s, p) => s + p.count, 0);
+  if (total === 0) {
+    return (
+      <div className="flex flex-col justify-end gap-1.5 h-full">
+        <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800" />
+      </div>
+    );
+  }
+  // Only show the top 3 in the label line to keep the tile compact —
+  // enough to communicate the mix without wrapping.
+  const label = safe.slice(0, 3).map((p) => `${p.name} ${p.count}`).join(' · ');
   return (
     <div className="flex flex-col justify-end gap-1.5 h-full">
       <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
-        {parts.map((p) => (
-          <div key={p.site} style={{ width: `${(p.count / total) * 100}%`, background: p.color }} />
+        {safe.map((p) => (
+          <div key={p.name} style={{ width: `${(p.count / total) * 100}%`, background: p.color }} />
         ))}
       </div>
-      <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
-        Mumbai 18 · Pune 14 · Bengaluru 16
+      <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight truncate">
+        {label}
       </div>
     </div>
   );

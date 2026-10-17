@@ -66,54 +66,56 @@
 
   .dark {
     /* ============================================================
-       Raw hex tokens — dark variants of the SoCampus palette.
-       `--ink` and `--ink-2` stay dark on purpose: they're used for
-       brand surfaces (login panel, chrome) that should remain
-       navy regardless of mode. `--text` is the body text colour and
-       does flip to light in dark mode.
-       Brand hues (indigo/teal/amber/coral/violet) stay recognisable
-       but lift ~15% so they contrast on dark backgrounds. Their
-       `-soft` chip backgrounds become deep tints; their `-ink`
-       foreground text becomes a light tint.
+       Dark palette — tuned for enterprise dashboard readability.
+       Key design choices:
+         • Clear separation between page (--paper) and surfaces
+           (--card). Target: 6-8% lightness delta so cards visibly
+           float on the page.
+         • Borders bright enough to delineate panels without being
+           visually noisy.
+         • Muted text sits around 68-72% lightness so secondary
+           labels stay comfortably readable, not dimmed-out.
+         • `--ink` / `--ink-2` stay dark navy (brand surfaces like
+           the login panel should remain dark regardless of mode).
        ============================================================ */
     --ink:        #0A1522;  --ink-2:      #15223A;
-    --paper:      #0B131F;  --line:       #1E2A3C;  --line-2: #2A3A52;
-    --text:       #E6EDF5;  --muted-x:    #8A98B0;  --faint:  #5D6B82;
-    --indigo:     #5B78F0;  --indigo-soft:#1C2A52;  --indigo-ink:#A9BAFF;
-    --teal:       #2CB5A2;  --teal-soft:  #0F2E2A;  --teal-ink:  #6EDBCB;
-    --amber:      #E8A42E;  --amber-soft: #3A2A0C;  --amber-ink: #F5C97A;
-    --coral:      #E96A52;  --coral-soft: #3A1D16;  --coral-ink: #F2A496;
-    --violet:     #9B6DF0;  --violet-soft:#2A1C52;
-    --shadow-card:  0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -8px rgba(0, 0, 0, .55);
+    --paper:      #0A121D;  --line:       #2A3A52;  --line-2: #3A4D6A;
+    --text:       #EEF2F8;  --muted-x:    #A1AEC3;  --faint:  #70809A;
+    --indigo:     #6E89F2;  --indigo-soft:#1F2E5A;  --indigo-ink:#B9C7FF;
+    --teal:       #3BC2AE;  --teal-soft:  #12332E;  --teal-ink:  #7EE3D3;
+    --amber:      #ECAE3C;  --amber-soft: #402E0E;  --amber-ink: #F7D085;
+    --coral:      #EC7560;  --coral-soft: #40201A;  --coral-ink: #F4AFA2;
+    --violet:     #A77AF2;  --violet-soft:#2E1F5A;
+    --shadow-card:  0 1px 2px rgba(0, 0, 0, .5), 0 10px 24px -8px rgba(0, 0, 0, .7);
 
     /* shadcn semantic tokens for dark mode */
-    --background:            218 44% 8%;    /* paper #0B131F */
-    --foreground:            214 29% 93%;   /* text  #E6EDF5 */
+    --background:            218 44% 8%;    /* paper #0A121D */
+    --foreground:            218 36% 95%;   /* text  #EEF2F8 */
 
-    --card:                  218 36% 11%;   /* a shade lighter than paper */
-    --card-foreground:       214 29% 93%;
+    --card:                  218 32% 14%;   /* clear step up from paper */
+    --card-foreground:       218 36% 95%;
 
-    --popover:               218 36% 11%;
-    --popover-foreground:    214 29% 93%;
+    --popover:               218 32% 14%;
+    --popover-foreground:    218 36% 95%;
 
-    --primary:               229 84% 65%;   /* indigo lift */
+    --primary:               227 85% 69%;   /* indigo lift */
     --primary-foreground:    0 0% 100%;
 
-    --secondary:             218 32% 16%;
-    --secondary-foreground:  214 29% 93%;
+    --secondary:             218 28% 18%;
+    --secondary-foreground:  218 36% 95%;
 
-    --muted:                 218 32% 16%;
-    --muted-foreground:      219 15% 62%;   /* muted-x #8A98B0 */
+    --muted:                 218 28% 18%;
+    --muted-foreground:      218 20% 72%;   /* brighter so sublabels read well */
 
-    --accent:                229 46% 22%;   /* indigo-soft dark */
-    --accent-foreground:     229 100% 83%;  /* indigo-ink dark */
+    --accent:                229 44% 24%;   /* indigo-soft dark */
+    --accent-foreground:     229 100% 86%;  /* indigo-ink dark */
 
-    --destructive:           9 76% 62%;     /* coral lift */
+    --destructive:           9 76% 65%;     /* coral lift */
     --destructive-foreground: 0 0% 100%;
 
-    --border:                218 33% 18%;   /* line #1E2A3C */
-    --input:                 218 32% 24%;   /* line-2 #2A3A52 */
-    --ring:                  229 84% 65%;
+    --border:                218 28% 24%;   /* line #2A3A52, now visible */
+    --input:                 218 28% 30%;   /* line-2 #3A4D6A */
+    --ring:                  227 85% 69%;
   }
 
   * {

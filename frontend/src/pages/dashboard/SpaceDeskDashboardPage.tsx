@@ -24,20 +24,20 @@ import { PeakBookingTimes } from './widgets/PeakBookingTimes';
 import { RecentActivity } from './widgets/RecentActivity';
 import { FeedbackPanel } from './widgets/FeedbackPanel';
 import { PantryOrdersPanel } from './widgets/PantryOrdersPanel';
-import { useLiveDashboardData } from './useLiveDashboardData';
-
-type RangeDays = 7 | 30 | 90;
+import { useLiveDashboardData, type DashboardRange } from './useLiveDashboardData';
 
 export default function SpaceDeskDashboardPage() {
   const [siteId, setSiteId] = useState<number | null>(null);
-  const [rangeDays, setRangeDays] = useState<RangeDays>(30);
+  // Unified date-window state. Starts as the 30-day preset; Hero's range
+  // toggle lets the user switch to 7d / 90d / a custom from–to range.
+  const [range, setRange] = useState<DashboardRange>({ kind: 'preset', days: 30 });
 
   const {
     heroOverlay, kpiOverlay, activityOverlay,
     facilityStatusOverlay, mostBookedOverlay, bookingsOverTimeOverlay, peakTimesOverlay,
     pantryOrdersOverlay, bookingChannelOverlay, feedbackOverlay,
     sites,
-  } = useLiveDashboardData({ siteId, rangeDays });
+  } = useLiveDashboardData({ siteId, range });
 
   const heroHasLiveFields = Object.keys(heroOverlay).length > 0;
 
@@ -50,8 +50,8 @@ export default function SpaceDeskDashboardPage() {
         sites={sites}
         selectedSiteId={siteId}
         onSiteChange={setSiteId}
-        rangeDays={rangeDays}
-        onRangeChange={setRangeDays}
+        range={range}
+        onRangeChange={setRange}
       />
 
       {/* 2. KPI tiles */}

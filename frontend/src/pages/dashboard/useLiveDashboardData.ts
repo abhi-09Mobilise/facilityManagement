@@ -34,9 +34,25 @@ import type {
 
 type RangeDays = 7 | 30 | 90;
 
+/**
+ * The dashboard's active date window — either a "last N days" preset or a
+ * user-picked custom range. Centralised here so the hook, the hero, and the
+ * owning page all speak the same type.
+ *
+ *   { kind: 'preset', days: 7 | 30 | 90 }
+ *   { kind: 'custom', from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
+ *
+ * `from` must be <= `to`, `to` must be <= today. The custom range is capped
+ * at 2 years so a stray pick doesn't fire a 10-year query against the DB.
+ */
+export type DashboardRange =
+  | { kind: 'preset'; days: RangeDays }
+  | { kind: 'custom'; from: string; to: string };
+
 export interface LiveDashboardParams {
   siteId?: number | null;
-  rangeDays?: RangeDays;
+  /** Preset or custom date window. Defaults to `{ kind: 'preset', days: 30 }`. */
+  range?: DashboardRange;
 }
 
 export interface LiveDashboardData {
@@ -68,8 +84,21 @@ export interface LiveDashboardData {
   refresh: () => void;
 }
 
+const DEFAULT_RANGE: DashboardRange = { kind: 'preset', days: 30 };
+
 export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDashboardData {
-  const { siteId = null, rangeDays = 30 } = params;
+  const { siteId = null, range = DEFAULT_RANGE } = params;
+  // Legacy derived value — several memos below still key on the preset number
+  // (hero's "last N days" labels, chart titles). For custom ranges we fall
+  // back to the inclusive day-span so those labels stay sensible.
+  const rangeDays: number = range.kind === 'preset'
+    ? range.days
+    : daysBetween(range.from, range.to);
+  // Stable primitive for dependency arrays — React can't deep-compare the
+  // range object across renders, so we flatten it to a cache key.
+  const rangeKey = range.kind === 'preset'
+    ? `preset:${range.days}`
+    : `custom:${range.from}:${range.to}`;
   const { user } = useAuth();
   const scope = useTenantScope();
 
@@ -124,8 +153,13 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
     if (scope.tenantId) listScope.tenant_id = scope.tenantId;
     if (scope.organisationId !== null) listScope.organisation_id = scope.organisationId;
 
+    // Resolve the active window to concrete from/to dates. Preset windows
+    // always end today; custom windows use whatever the user picked.
     const today = isoDate(new Date());
-    const rangeStart = isoDate(addDays(new Date(), -(rangeDays - 1)));
+    const windowTo = range.kind === 'custom' ? range.to : today;
+    const windowFrom = range.kind === 'custom'
+      ? range.from
+      : isoDate(addDays(new Date(), -(range.days - 1)));
 
     // Promise.allSettled — one API blowing up (e.g. gantt missing a
     // required scope field on some backends) shouldn't zero out every
@@ -140,11 +174,11 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
         to_date: today,
         limit: 100,
       }),
-      dashboardsApi.gantt({ ...scoped, from: rangeStart, to: today }),
-      dashboardsApi.peakTimes({ ...scoped, from: rangeStart, to: today }),
-      dashboardsApi.pantryOrders({ ...scoped, from: rangeStart, to: today }),
-      dashboardsApi.bookingChannel({ ...scoped, from: rangeStart, to: today }),
-      dashboardsApi.feedback({ ...scoped, from: rangeStart, to: today }),
+      dashboardsApi.gantt({ ...scoped, from: windowFrom, to: windowTo }),
+      dashboardsApi.peakTimes({ ...scoped, from: windowFrom, to: windowTo }),
+      dashboardsApi.pantryOrders({ ...scoped, from: windowFrom, to: windowTo }),
+      dashboardsApi.bookingChannel({ ...scoped, from: windowFrom, to: windowTo }),
+      dashboardsApi.feedback({ ...scoped, from: windowFrom, to: windowTo }),
       dashboardsApi.recentActivity({ ...scoped, limit: 20 }),
       sitesApi.list({ ...listScope, limit: 200 }),
       facilitiesApi.list({ ...listScope, limit: 500 }),
@@ -236,7 +270,10 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
       .finally(() => { if (alive) setLoading(false); });
 
     return () => { alive = false; };
-  }, [isSuper, scope.tenantId, scope.organisationId, siteId, rangeDays, nonce]);
+    // Dependencies: refetch when scope / site / window changes. For custom
+    // ranges we key on the from/to strings; for presets we key on the day
+    // count. All collapsed into a single stable string via rangeKey below.
+  }, [isSuper, scope.tenantId, scope.organisationId, siteId, rangeKey, nonce]);
 
   // --- Hero overlay --------------------------------------------------
   const heroOverlay = useMemo<Partial<HeroOverview>>(() => {
@@ -261,15 +298,19 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
       ? `${siteCount} site${siteCount === 1 ? '' : 's'} · ${total} facilities · ${occupied} in use · ${free} free`
       : `${total} facilities · ${occupied} in use · ${free} free`;
 
-    return {
+    const overlay: Partial<HeroOverview> = {
       occupiedPercent,
       inUseNow: occupied,
       availableToBook: free,
       startingWithin30Min: startingSoon,
       summary,
-      rangeDays,
     };
-  }, [dash, todayBookings, sites, rangeDays]);
+    // Hero's sample type caps rangeDays at 7|30|90; only pass it when we're
+    // in a preset window. Custom ranges leave rangeDays unset — the hero's
+    // own label logic reads the full range object (see range prop).
+    if (range.kind === 'preset') overlay.rangeDays = range.days;
+    return overlay;
+  }, [dash, todayBookings, sites, range]);
 
   // --- KPI overlay ---------------------------------------------------
   const kpiOverlay = useMemo<Record<string, Partial<KpiTile>>>(() => {
@@ -277,18 +318,58 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
     const total = dash.summary.total_facilities;
     const occupied = dash.summary.occupied_now;
     const percent = total > 0 ? Math.round((occupied / total) * 100) : 0;
+
+    // BUG-03 fix: real per-site breakdown for the stacked bar inside the
+    // "Total facilities" tile. Replaces the hardcoded Mumbai/Pune/Bengaluru.
+    const SITE_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+    const perSite = new Map<number, number>();
+    for (const f of facilities) {
+      if (f.site_id == null) continue;
+      perSite.set(f.site_id, (perSite.get(f.site_id) || 0) + 1);
+    }
+    const siteNameById = new Map<number, string>();
+    for (const s of sites) siteNameById.set(s.id, s.name);
+    const siteBreakdown = Array.from(perSite.entries())
+      .map(([siteId, count], i) => ({
+        name: siteNameById.get(siteId) || `Site #${siteId}`,
+        count,
+        color: SITE_COLORS[i % SITE_COLORS.length],
+      }))
+      .sort((a, b) => b.count - a.count);
+
     const out: Record<string, Partial<KpiTile>> = {
       'Total facilities': {
         value: total.toLocaleString(),
         secondary: `${sites.length} site${sites.length === 1 ? '' : 's'}`,
+        siteBreakdown: siteBreakdown.length > 0 ? siteBreakdown : undefined,
       },
       'Booked right now': {
         value: occupied.toLocaleString(),
+        // BUG-03 fix: real denominator from dashboard summary, not "/ 48".
+        max: total,
         secondary: `${percent}% occupied right now`,
       },
     };
+    // BUG-04 fix: wire the "Bookings · N days" tile from the gantt payload
+    // (which lists every booking in the active window). Counts non-cancelled
+    // bookings so numbers match the Bookings-over-time chart and My bookings.
+    if (gantt) {
+      const inWindow = gantt.items.filter((it) => it.status !== 'cancelled' && it.status !== 'rejected').length;
+      // Reflect the active range in the label so Custom (e.g. 60 days) reads correctly.
+      const label = `Bookings · ${rangeDays} day${rangeDays === 1 ? '' : 's'}`;
+      out[label] = {
+        value: inWindow.toLocaleString(),
+        secondary: `in the selected window`,
+      };
+      // Also populate the fixed "Bookings · 30 days" label used by sampleData,
+      // in case the hero stays on the default preset — keeps the tile wired
+      // whether the user tweaks the range or not.
+      if (rangeDays === 30) {
+        out['Bookings · 30 days'] = out[label];
+      }
+    }
     return out;
-  }, [dash, sites]);
+  }, [dash, sites, facilities, gantt, rangeDays]);
 
   // --- Recent activity overlay --------------------------------------
   // Prefer the dedicated /dashboards/recent-activity feed (unions new
@@ -572,6 +653,17 @@ function addDays(d: Date, n: number): Date {
   const copy = new Date(d);
   copy.setDate(copy.getDate() + n);
   return copy;
+}
+
+// Inclusive day count between two YYYY-MM-DD strings — e.g. 2026-10-01 →
+// 2026-10-07 is 7 days. Used to translate a custom date range into the
+// "last N days" number that chart aggregations still key on.
+function daysBetween(from: string, to: string): number {
+  const a = new Date(from);
+  const b = new Date(to);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 1;
+  const ms = b.getTime() - a.getTime();
+  return Math.max(1, Math.round(ms / (24 * 60 * 60 * 1000)) + 1);
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];

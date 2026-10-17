@@ -80,32 +80,35 @@ export default function SlotGrid({
     let alive = true;
     setLoading(true);
     setAvail({});
-    // Fire one /check per slot in parallel. The endpoint is cheap (one
-    // SUM + one capacity compare on the server) so this is fine for the
-    // ~10–30 slots a typical day has.
-    const promises = slots.map((s) =>
-      bookingsApi
-        .check({
-          facility_id: facilityId,
-          start_at: `${date} ${s.start}:00`,
-          end_at:   `${date} ${s.end}:00`,
-          attendees: Math.max(1, attendees || 1),
-        })
-        .then((res) => ({
-          start: s.start,
-          data: res.data as SlotAvailability | undefined,
-        }))
-        .catch(() => ({ start: s.start, data: undefined }))
-    );
-    Promise.all(promises).then((results) => {
-      if (!alive) return;
-      const map: Record<string, SlotAvailability> = {};
-      for (const r of results) {
-        if (r.data) map[r.start] = r.data;
-      }
-      setAvail(map);
-      setLoading(false);
-    });
+    // BUG-28 fix: one round-trip gets every slot's availability. Replaces
+    // the earlier N-parallel-/check pattern that fired 20+ requests per
+    // date change on a typical day.
+    bookingsApi
+      .dayAvailability({
+        facility_id: facilityId,
+        date,
+        attendees: Math.max(1, attendees || 1),
+      })
+      .then((res) => {
+        if (!alive) return;
+        const map: Record<string, SlotAvailability> = {};
+        const payload = res.data;
+        if (payload && Array.isArray(payload.slots)) {
+          for (const s of payload.slots) {
+            map[s.start] = {
+              conflict: s.conflict,
+              mode: payload.mode,
+              seats_remaining: s.seats_remaining,
+              capacity: payload.capacity,
+            };
+          }
+        }
+        setAvail(map);
+      })
+      .catch(() => {
+        if (alive) setAvail({});
+      })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [facilityId, date, slots, attendees]);
 
