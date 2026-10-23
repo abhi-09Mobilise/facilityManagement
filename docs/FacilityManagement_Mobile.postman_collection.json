@@ -1,0 +1,631 @@
+{
+  "info": {
+    "_postman_id": "fm-mobile-2026-10-21",
+    "name": "FacilityManagement - Mobile APIs",
+    "description": "Complete booking-related API surface for the Mobile team.\n\n## Setup\n1. Import this collection into Postman.\n2. Open the collection → Variables tab.\n3. Set `base_url` to your backend host (e.g. `http://localhost:3000` or `https://api.yourcompany.com`).\n4. Run **Auth → Login** first — it auto-saves the JWT to `{{token}}`.\n5. All other requests use that token automatically via collection-level Bearer auth.\n\n## Groups\n- **1. Auth** — login/logout/me/forgot/reset\n- **2. Pickers** — sites, buildings, floors, facilities, operating hours (populate booking form dropdowns)\n- **3. Bookings** — list / check availability / create / cancel / reschedule\n- **4. Approvals** — manager inbox + approve/reject\n- **5. QR Public** — scan-based check-in / check-out (no auth)\n- **6. Ratings** — post-booking feedback\n- **7. Extras** — departments, pantries\n\n## Response envelope\n```json\n{ \"status\": true,  \"data\": { ... } }   // success\n{ \"status\": false, \"msg\": \"...\" }       // error (plus HTTP 4xx/5xx)\n```\n\n## Gotchas\n- `to_date` is EXCLUSIVE in list filters (query 'today' uses `from=today, to=tomorrow`).\n- Date format: `YYYY-MM-DD HH:MM:SS` (24-hour, server timezone).\n- `start_at` must be in the future on create.\n- Always pre-check availability via `GET /bookings/day` or `GET /bookings/check` before `POST /bookings`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "handoff_token", "value": "", "type": "string", "description": "Paste the Embassy-minted handoff JWT here before running 'Exchange handoff for FMS token'." },
+    { "key": "facility_id", "value": "86", "type": "string" },
+    { "key": "booking_id", "value": "506", "type": "string" },
+    { "key": "site_id", "value": "3", "type": "string" },
+    { "key": "today", "value": "2026-10-21", "type": "string" },
+    { "key": "tomorrow", "value": "2026-10-22", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-save token to collection variable for subsequent requests",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.status && json.data && json.data.token) {",
+                  "    pm.collectionVariables.set('token', json.data.token);",
+                  "    console.log('✓ Token saved to {{token}}');",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin@umbrella.local\",\n  \"password\": \"your-password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Returns `{ token, user }`. Rate limit: 10 attempts / 15 min / IP.\n\nResponse shape:\n```json\n{\n  \"status\": true,\n  \"data\": {\n    \"token\": \"eyJhbGc...\",\n    \"user\": {\n      \"id\": 42, \"name\": \"Rohit\", \"lname\": \"Pandey\",\n      \"email\": \"...\", \"username\": \"...\",\n      \"role\": \"employee\",\n      \"tenant_id\": 5, \"organisation_id\": 5,\n      \"department_id\": 3, \"is_approver\": 0\n    }\n  }\n}\n```"
+          }
+        },
+        {
+          "name": "Me (current user)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "Returns the logged-in user profile. Use on app launch to verify token is still valid."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "logout"]
+            }
+          }
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/forgot-password",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "forgot-password"]
+            },
+            "description": "Sends a password-reset email. Rate limit: 20 / hour / IP."
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"token-from-email\",\n  \"new_password\": \"newSecret123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/reset-password",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "reset-password"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Pickers (dropdowns)",
+      "description": "Everything needed to populate the booking form — Site → Building → Floor → Facility cascade.",
+      "item": [
+        {
+          "name": "List sites",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/sites?page=1&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sites"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "100" },
+                { "key": "q", "value": "", "disabled": true, "description": "Search by name/code/address" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List buildings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/buildings?site_id={{site_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "buildings"],
+              "query": [
+                { "key": "site_id", "value": "{{site_id}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List floors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/floors?site_id={{site_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "floors"],
+              "query": [
+                { "key": "site_id", "value": "{{site_id}}" },
+                { "key": "building_id", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List facilities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/facilities?page=1&limit=50&site_id={{site_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "facilities"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" },
+                { "key": "site_id", "value": "{{site_id}}" },
+                { "key": "floor_id", "value": "", "disabled": true },
+                { "key": "type", "value": "", "disabled": true, "description": "meeting_room | gym | conference_room | desk | swimming_pool | other" },
+                { "key": "q", "value": "", "disabled": true, "description": "Search by facility name" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Facility detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/facilities/{{facility_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "facilities", "{{facility_id}}"]
+            },
+            "description": "Returns capacity, type, approval rules, chair layout, operating hours — everything needed on the facility detail screen."
+          }
+        },
+        {
+          "name": "Facility operating hours",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/facilities/{{facility_id}}/hours",
+              "host": ["{{base_url}}"],
+              "path": ["api", "facilities", "{{facility_id}}", "hours"]
+            },
+            "description": "Returns rows per weekday with open/close/slot_minutes. day_of_week: 0=Sun..6=Sat."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Bookings",
+      "item": [
+        {
+          "name": "List bookings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bookings?page=1&limit=20&scope=mine&from_date={{today}}&to_date={{tomorrow}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "scope", "value": "mine", "description": "mine | tenant | team" },
+                { "key": "from_date", "value": "{{today}}", "description": "Inclusive. Format YYYY-MM-DD" },
+                { "key": "to_date", "value": "{{tomorrow}}", "description": "EXCLUSIVE. Use next day to query 'today'" },
+                { "key": "status", "value": "", "disabled": true, "description": "pending | approved | rejected | cancelled | completed" },
+                { "key": "facility_id", "value": "", "disabled": true },
+                { "key": "q", "value": "", "disabled": true, "description": "Search title/facility/booker" }
+              ]
+            },
+            "description": "Paginated list. Each row includes facility_name, booker_name, department_name, status, times, attendee_count.\n\n⚠️ `to_date` is **exclusive**. For 'today only' use `from=today, to=tomorrow`."
+          }
+        },
+        {
+          "name": "Day availability (all slots)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bookings/day?facility_id={{facility_id}}&date={{today}}&attendees=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings", "day"],
+              "query": [
+                { "key": "facility_id", "value": "{{facility_id}}" },
+                { "key": "date", "value": "{{today}}", "description": "YYYY-MM-DD" },
+                { "key": "attendees", "value": "1" }
+              ]
+            },
+            "description": "**Use this instead of N parallel /check calls.** Returns availability for every slot of the day in one call.\n\nResponse:\n```json\n{\n  \"facility_id\": 86,\n  \"date\": \"2026-10-21\",\n  \"mode\": \"shared\",\n  \"capacity\": 28,\n  \"closed\": false,\n  \"slots\": [\n    { \"start\": \"09:00\", \"end\": \"09:30\", \"conflict\": false, \"seats_taken\": 0, \"seats_remaining\": 28 },\n    ...\n  ]\n}\n```"
+          }
+        },
+        {
+          "name": "Check single slot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bookings/check?facility_id={{facility_id}}&start_at=2026-10-22 10:00:00&end_at=2026-10-22 11:00:00&attendees=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings", "check"],
+              "query": [
+                { "key": "facility_id", "value": "{{facility_id}}" },
+                { "key": "start_at", "value": "2026-10-22 10:00:00" },
+                { "key": "end_at", "value": "2026-10-22 11:00:00" },
+                { "key": "attendees", "value": "1" }
+              ]
+            },
+            "description": "Returns `{ conflict, mode, capacity, seats_taken, seats_remaining, occupied_desks }`. Use for one-off pre-flight check (prefer `/day` for a full picker)."
+          }
+        },
+        {
+          "name": "Create booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"facility_id\": {{facility_id}},\n  \"title\": \"Design review\",\n  \"start_at\": \"2026-10-22 10:00:00\",\n  \"end_at\":   \"2026-10-22 11:00:00\",\n  \"department_id\": null,\n  \"remarks\": \"Monthly sync\",\n  \"repeat_type\": \"none\",\n  \"dont_disturb\": 0,\n  \"guests\": [],\n  \"meals\": [],\n  \"desk_ids\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings"]
+            },
+            "description": "Creates a booking. Returns `{ id, status }` where status is `approved` or `pending` (if facility requires approval).\n\n**Required:** facility_id, title, start_at, end_at.\n**Optional:** department_id, remarks, repeat_type (none/daily/weekly/monthly), guests[], meals[] (meal_time IDs), desk_ids[] (chair IDs from facility layout).\n\nCommon errors:\n- 422 'Start time must be in the future.'\n- 409 'This slot is already booked'\n- 409 'This facility has N bookable seat(s). You are trying to book M…'\n- 422 'Facility is closed at that time' (operating-hours violation)"
+          }
+        },
+        {
+          "name": "Get booking detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bookings/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings", "{{booking_id}}"]
+            },
+            "description": "Full detail incl. guests[], meals[], approvals[]."
+          }
+        },
+        {
+          "name": "Cancel booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bookings/{{booking_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings", "{{booking_id}}", "cancel"]
+            },
+            "description": "No body. Rules:\n- Past bookings can't be cancelled\n- Users can only cancel their own bookings (super_admin can force)"
+          }
+        },
+        {
+          "name": "Reschedule (via mail token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"signed-token-from-email\",\n  \"start_at\": \"2026-10-23 10:00:00\",\n  \"end_at\":   \"2026-10-23 11:00:00\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/bookings/{{booking_id}}/reschedule",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bookings", "{{booking_id}}", "reschedule"]
+            },
+            "description": "Used when user clicks a 'Reschedule' link from a booking email."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Approvals (manager)",
+      "item": [
+        {
+          "name": "Inbox (pending for me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/approvals/inbox",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approvals", "inbox"]
+            },
+            "description": "List of bookings waiting for the logged-in user's decision."
+          }
+        },
+        {
+          "name": "Decision history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/approvals/history",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approvals", "history"]
+            }
+          }
+        },
+        {
+          "name": "Decide (approve / reject)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"remarks\": \"LGTM\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/approvals/:approval_id/decide",
+              "host": ["{{base_url}}"],
+              "path": ["api", "approvals", ":approval_id", "decide"],
+              "variable": [
+                { "key": "approval_id", "value": "1" }
+              ]
+            },
+            "description": "decision: `approved` | `rejected`. First rejection fails the whole booking; all-approved → booking becomes approved."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. QR Public (check-in/out)",
+      "description": "Public endpoints — no auth, the QR code itself is the proof. Rate-limited: 120 req/min/IP. Base path is `/public`, NOT `/api`.",
+      "item": [
+        {
+          "name": "Check-in",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"QR-CODE-FROM-SCAN\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/public/checkin",
+              "host": ["{{base_url}}"],
+              "path": ["public", "checkin"]
+            }
+          }
+        },
+        {
+          "name": "Check-out (early)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"QR-CODE-FROM-SCAN\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/public/checkout",
+              "host": ["{{base_url}}"],
+              "path": ["public", "checkout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Ratings",
+      "item": [
+        {
+          "name": "Did I rate this booking?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/ratings/mine/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ratings", "mine", "{{booking_id}}"]
+            },
+            "description": "Returns existing rating (if any) so the UI can switch to 'you already rated' state."
+          }
+        },
+        {
+          "name": "Submit rating (in-app)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking_id\": {{booking_id}},\n  \"stars\": 5,\n  \"comment\": \"Great space\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ratings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ratings"]
+            }
+          }
+        },
+        {
+          "name": "Email-link: load booking for rating",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/public/ratings/:token",
+              "host": ["{{base_url}}"],
+              "path": ["public", "ratings", ":token"],
+              "variable": [
+                { "key": "token", "value": "signed-rating-token" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Email-link: submit rating",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stars\": 5,\n  \"comment\": \"...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/public/ratings/:token",
+              "host": ["{{base_url}}"],
+              "path": ["public", "ratings", ":token"],
+              "variable": [
+                { "key": "token", "value": "signed-rating-token" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Extras (optional)",
+      "item": [
+        {
+          "name": "My department / summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/users/me-summary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "me-summary"]
+            },
+            "description": "Logged-in user's quick stats (my bookings count, pending approvals, etc.) — good for home screen tiles."
+          }
+        },
+        {
+          "name": "List departments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/departments",
+              "host": ["{{base_url}}"],
+              "path": ["api", "departments"]
+            }
+          }
+        },
+        {
+          "name": "Facility's attached pantry menu",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/facilities/{{facility_id}}/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "facilities", "{{facility_id}}", "menu"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Embassy SSO (preferred for mobile)",
+      "description": "Single sign-on flow when FMS is embedded under the Embassy app.\n\n**Testing order (2 steps):**\n1. Run **'Exchange handoff for FMS token'** — paste the handoff token minted by the Embassy backend in the `{{handoff_token}}` variable, then run. On success, the FMS access token is auto-saved to `{{token}}`.\n2. Run **'Verify auth via /api/demo'** — confirms the access token works.\n\nAfter step 1, every other request in this collection authenticates automatically (collection-level Bearer uses `{{token}}`).\n\n**Where does the handoff token come from?**\nThe Embassy backend builds a `POST /api/sso/fms-handoff` endpoint that mints a short-lived RS256 JWT signed with Embassy's private key. The mobile client calls that Embassy endpoint, receives `{ handoff_token }`, then forwards it to FMS below.\n\n**Requirements:**\n- FMS server has `EMBASSY_SSO_ENABLED=true` and the Embassy public key in place.\n- The `email` claim in the token must match a user in the FMS `users` table.",
+      "item": [
+        {
+          "name": "Exchange handoff for FMS token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handoff_token\": \"{{handoff_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/sso/embassy",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "sso", "embassy"]
+            },
+            "description": "Exchange a handoff token (from Embassy OR from the dev-mint endpoint above) for an FMS access token.\n\nFMS verifies:\n- Signature (using Embassy public key)\n- Issuer (`embassy`), audience (`fms`)\n- Expiry\n- Replay (jti not reused)\n- User exists in FMS DB (lookup by email)\n\nResponse (success):\n```json\n{\n  \"status\": true,\n  \"data\": {\n    \"token\": \"eyJhbGc...\",       // FMS access token (12h)\n    \"user\": { \"id\": 42, \"email\": \"...\", \"role\": \"...\" }\n  }\n}\n```\n\nResponse (user not in FMS):\n```json\n{ \"status\": false, \"msg\": \"User is not provisioned in FMS. Please contact your administrator.\" }\n```\n\nThe `token` is auto-saved to `{{token}}` — every other request in this collection now authenticates with it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-save FMS access token to collection variable",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.status && json.data && json.data.token) {",
+                  "    pm.collectionVariables.set('token', json.data.token);",
+                  "    console.log('✓ FMS access token saved to {{token}}');",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify auth via /api/demo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/demo",
+              "host": ["{{base_url}}"],
+              "path": ["api", "demo"]
+            },
+            "description": "Confirms the FMS access token works. Returns the authenticated user and server time.\n\nResponse:\n```json\n{\n  \"status\": true,\n  \"msg\": \"Embassy SSO round-trip successful. You are authenticated as this FMS user:\",\n  \"data\": {\n    \"authenticated_as\": { \"id\": 42, \"email\": \"...\", \"role\": \"...\", \"tenant_id\": 5 },\n    \"server_time\": \"...\"\n  }\n}\n```\n\nIf you get 401 here, the exchange step either failed or the saved token expired (12h)."
+          }
+        }
+      ]
+    }
+  ]
+}

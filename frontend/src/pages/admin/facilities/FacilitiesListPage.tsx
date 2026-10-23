@@ -176,6 +176,8 @@ export default function FacilitiesListPage() {
 
   const columns: GridColDef<FacilityRow>[] = [
     { field: '_sno', headerName: 'S.No', width: 80, sortable: false, filterable: false },
+    { field: 'organisation_name', headerName: 'Organisation', width: 160,
+      valueGetter: (_v, row) => row.organisation_name || '—' },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
     {
       field: 'type', headerName: 'Type', width: 140,

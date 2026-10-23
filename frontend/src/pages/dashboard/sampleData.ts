@@ -87,7 +87,7 @@ export interface KpiTile {
 export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile[] {
   const sample: KpiTile[] = [
     { label: 'Total facilities',    value: '48',    secondary: '3 sites · 6 facility types', spark: [] },
-    { label: 'Booked right now',    value: '28',    secondary: '58% occupied · 80 more today', spark: [10, 14, 16, 18, 20, 24, 22, 25, 27, 28] },
+    { label: 'Booked today',        value: '28',    secondary: '42 bookings · 180 seats · 58% occupied', spark: [10, 14, 16, 18, 20, 24, 22, 25, 27, 28] },
     { label: 'Bookings · 30 days',  value: '4,819', trend: { seriesKey: 'bookings', direction: 'up', percent: 12.6, color: '#16a34a' }, secondary: 'vs previous 30 days', spark: [120, 180, 90, 210, 160, 170, 220, 150, 190, 230, 180, 210] },
     { label: 'Average feedback',    value: '4.1',   secondary: '1,012 reviews', spark: [3.9, 4.0, 4.0, 3.9, 4.0, 4.1, 4.0, 4.2, 4.1, 4.1] },
     { label: 'Pantry orders',       value: '768',   secondary: '19 per 100 check-ins', spark: [20, 24, 18, 30, 28, 25, 32, 20, 26, 30, 22, 28] },
@@ -98,7 +98,7 @@ export function getKpiTiles(overlay?: Record<string, Partial<KpiTile>>): KpiTile
   // values per tile where the backend provided them.
   const empty: KpiTile[] = [
     { label: 'Total facilities',    value: '—', valueMuted: true, secondary: '', spark: [] },
-    { label: 'Booked right now',    value: '—', valueMuted: true, secondary: '', spark: [] },
+    { label: 'Booked today',        value: '—', valueMuted: true, secondary: '', spark: [] },
     { label: 'Bookings · 30 days',  value: '—', valueMuted: true, secondary: '', spark: [] },
     { label: 'Average feedback',    value: '—', valueMuted: true, secondary: '', spark: [] },
     { label: 'Pantry orders',       value: '—', valueMuted: true, secondary: '', spark: [] },

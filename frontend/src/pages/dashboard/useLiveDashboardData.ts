@@ -55,6 +55,25 @@ export interface LiveDashboardParams {
   range?: DashboardRange;
 }
 
+// Enriched row shown in the "Booked today" drilldown drawer. Combines the
+// raw booking fields with site + organisation names resolved client-side
+// from the facilities + sites lists already fetched by the dashboard.
+export interface BookedTodayRow {
+  id: number;
+  title: string;
+  facility_id: number;
+  facility_name: string;
+  facility_type?: string;
+  site_name: string;
+  organisation_name: string;
+  start_at: string;
+  end_at: string;
+  status: string;
+  booker_name: string;
+  department_name?: string;
+  attendee_count: number;
+}
+
 export interface LiveDashboardData {
   heroOverlay: Partial<HeroOverview>;
   kpiOverlay: Record<string, Partial<KpiTile>>;
@@ -78,6 +97,9 @@ export interface LiveDashboardData {
   pantryOrdersOverlay: PantryOrdersPayload | null;
   bookingChannelOverlay: BookingChannelPayload | null;
   feedbackOverlay: FeedbackPayload | null;
+  // Enriched list for the "Booked today" drilldown panel. Non-cancelled
+  // bookings whose window overlaps today, with site + org resolved.
+  bookedTodayDetails: BookedTodayRow[];
   sites: Site[];
   loading: boolean;
   error: string | null;
@@ -156,6 +178,10 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
     // Resolve the active window to concrete from/to dates. Preset windows
     // always end today; custom windows use whatever the user picked.
     const today = isoDate(new Date());
+    // bookingsApi.list treats `to_date` as EXCLUSIVE (`b.start_at < ?`), so
+    // querying "today's bookings" needs tomorrow as the upper bound — else
+    // the WHERE collapses to `>= today AND < today` and returns zero rows.
+    const tomorrow = isoDate(addDays(new Date(), 1));
     const windowTo = range.kind === 'custom' ? range.to : today;
     const windowFrom = range.kind === 'custom'
       ? range.from
@@ -171,7 +197,7 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
         ...(scoped.tenant_id ? { tenant_id: scoped.tenant_id } : {}),
         scope: 'tenant',
         from_date: today,
-        to_date: today,
+        to_date: tomorrow,
         limit: 100,
       }),
       dashboardsApi.gantt({ ...scoped, from: windowFrom, to: windowTo }),
@@ -293,10 +319,17 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
       return delta > 0 && delta <= thirtyMinMs;
     }).length;
 
+    // When a specific site is filtered in, the summary line should name
+    // THAT site instead of the misleading tenant-wide site count.
+    const selectedSiteName = siteId != null
+      ? (sites.find((s) => s.id === siteId)?.name ?? null)
+      : null;
     const siteCount = sites.length;
-    const summary = siteCount > 0
-      ? `${siteCount} site${siteCount === 1 ? '' : 's'} · ${total} facilities · ${occupied} in use · ${free} free`
-      : `${total} facilities · ${occupied} in use · ${free} free`;
+    const summary = selectedSiteName
+      ? `${selectedSiteName} · ${total} facilities · ${occupied} in use · ${free} free`
+      : siteCount > 0
+        ? `${siteCount} site${siteCount === 1 ? '' : 's'} · ${total} facilities · ${occupied} in use · ${free} free`
+        : `${total} facilities · ${occupied} in use · ${free} free`;
 
     const overlay: Partial<HeroOverview> = {
       occupiedPercent,
@@ -310,28 +343,43 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
     // own label logic reads the full range object (see range prop).
     if (range.kind === 'preset') overlay.rangeDays = range.days;
     return overlay;
-  }, [dash, todayBookings, sites, range]);
+  }, [dash, todayBookings, sites, range, siteId]);
 
   // --- KPI overlay ---------------------------------------------------
   const kpiOverlay = useMemo<Record<string, Partial<KpiTile>>>(() => {
     if (!dash) return {};
     const total = dash.summary.total_facilities;
     const occupied = dash.summary.occupied_now;
-    const percent = total > 0 ? Math.round((occupied / total) * 100) : 0;
+    // "Booked today" stats — any booking whose window overlaps today
+    // (not just "active right now"). The old right-now metric lives in
+    // the Peak Booking Times heatmap, so the KPI tile now gives the
+    // daily rollup instead.
+    const bookedToday  = dash.summary.facilities_booked_today ?? 0;
+    const bookingsToday = dash.summary.bookings_today ?? 0;
+    const seatsToday    = dash.summary.seats_booked_today ?? 0;
+    const todayPercent = total > 0 ? (bookedToday / total) * 100 : 0;
 
     // BUG-03 fix: real per-site breakdown for the stacked bar inside the
     // "Total facilities" tile. Replaces the hardcoded Mumbai/Pune/Bengaluru.
+    // When a specific site is filtered in, skip the breakdown entirely —
+    // a stacked bar of one site is meaningless and the tenant-wide
+    // "Hyderabad 56 · Delhi 26 …" label contradicts the filter.
     const SITE_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+    const selectedSiteName = siteId != null
+      ? (sites.find((s) => s.id === siteId)?.name ?? null)
+      : null;
     const perSite = new Map<number, number>();
-    for (const f of facilities) {
-      if (f.site_id == null) continue;
-      perSite.set(f.site_id, (perSite.get(f.site_id) || 0) + 1);
+    if (siteId == null) {
+      for (const f of facilities) {
+        if (f.site_id == null) continue;
+        perSite.set(f.site_id, (perSite.get(f.site_id) || 0) + 1);
+      }
     }
     const siteNameById = new Map<number, string>();
     for (const s of sites) siteNameById.set(s.id, s.name);
     const siteBreakdown = Array.from(perSite.entries())
-      .map(([siteId, count], i) => ({
-        name: siteNameById.get(siteId) || `Site #${siteId}`,
+      .map(([sid, count], i) => ({
+        name: siteNameById.get(sid) || `Site #${sid}`,
         count,
         color: SITE_COLORS[i % SITE_COLORS.length],
       }))
@@ -340,14 +388,20 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
     const out: Record<string, Partial<KpiTile>> = {
       'Total facilities': {
         value: total.toLocaleString(),
-        secondary: `${sites.length} site${sites.length === 1 ? '' : 's'}`,
+        secondary: selectedSiteName
+          ? selectedSiteName
+          : `${sites.length} site${sites.length === 1 ? '' : 's'}`,
         siteBreakdown: siteBreakdown.length > 0 ? siteBreakdown : undefined,
       },
-      'Booked right now': {
-        value: occupied.toLocaleString(),
+      'Booked today': {
+        value: bookedToday.toLocaleString(),
         // BUG-03 fix: real denominator from dashboard summary, not "/ 48".
         max: total,
-        secondary: `${percent}% occupied right now`,
+        // Secondary mirrors the three numbers the user cares about —
+        // bookings count, seats taken, and % of facilities utilised.
+        // Percentage uses adaptive decimals so tiny values (0.04%) don't
+        // round down to a misleading "0%".
+        secondary: `${bookingsToday} booking${bookingsToday === 1 ? '' : 's'} · ${seatsToday} seat${seatsToday === 1 ? '' : 's'} · ${formatPercent(todayPercent)} occupied`,
       },
     };
     // BUG-04 fix: wire the "Bookings · N days" tile from the gantt payload
@@ -369,7 +423,7 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
       }
     }
     return out;
-  }, [dash, sites, facilities, gantt, rangeDays]);
+  }, [dash, sites, facilities, gantt, rangeDays, siteId]);
 
   // --- Recent activity overlay --------------------------------------
   // Prefer the dedicated /dashboards/recent-activity feed (unions new
@@ -604,10 +658,53 @@ export function useLiveDashboardData(params: LiveDashboardParams = {}): LiveDash
   // wins so the dashboard reflects reality.
   const feedbackOverlay = feedback && feedback.reviews > 0 ? feedback : null;
 
+  // --- Booked-today details for the KPI tile drawer -----------------
+  // Resolve facility → site → organisation names from the lists already
+  // fetched above (sites, facilities), so the drawer can show rich
+  // context without hitting a new endpoint. Cancelled/rejected rows are
+  // excluded to match the backend COUNT used in the tile summary.
+  const bookedTodayDetails = useMemo<BookedTodayRow[]>(() => {
+    if (!todayBookings || todayBookings.length === 0) return [];
+    const facilityById = new Map<number, Facility>();
+    for (const f of facilities) facilityById.set(f.id, f);
+    const siteById = new Map<number, Site>();
+    for (const s of sites) siteById.set(s.id, s);
+    const out: BookedTodayRow[] = [];
+    for (const b of todayBookings) {
+      if (b.status === 'cancelled' || b.status === 'rejected') continue;
+      const fac = facilityById.get(b.facility_id);
+      const site = fac?.site_id != null ? siteById.get(fac.site_id) : undefined;
+      const bookerFirst = (b.booker_name || '').trim();
+      const bookerLast  = ((b as unknown as { booker_lname?: string }).booker_lname || '').trim();
+      const booker = [bookerFirst, bookerLast].filter(Boolean).join(' ') || b.booker_username || `#${b.user_id}`;
+      out.push({
+        id: b.id,
+        title: b.title || `Booking #${b.id}`,
+        facility_id: b.facility_id,
+        facility_name: b.facility_name || fac?.name || `Facility #${b.facility_id}`,
+        facility_type: b.facility_type || fac?.type,
+        site_name: site?.name || fac?.site_name || '—',
+        organisation_name: (site as unknown as { organisation_name?: string })?.organisation_name
+          || (fac as unknown as { organisation_name?: string })?.organisation_name
+          || '—',
+        start_at: b.start_at,
+        end_at: b.end_at,
+        status: b.status,
+        booker_name: booker,
+        department_name: b.department_name || undefined,
+        attendee_count: Number((b as unknown as { attendee_count?: number }).attendee_count || 1),
+      });
+    }
+    // Sort by start time so the earliest booking shows first.
+    out.sort((a, b) => a.start_at.localeCompare(b.start_at));
+    return out;
+  }, [todayBookings, facilities, sites]);
+
   return {
     heroOverlay, kpiOverlay, activityOverlay,
     facilityStatusOverlay, mostBookedOverlay, bookingsOverTimeOverlay, peakTimesOverlay,
     pantryOrdersOverlay, bookingChannelOverlay, feedbackOverlay,
+    bookedTodayDetails,
     sites,
     loading, error, refresh,
   };
@@ -664,6 +761,32 @@ function daysBetween(from: string, to: string): number {
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 1;
   const ms = b.getTime() - a.getTime();
   return Math.max(1, Math.round(ms / (24 * 60 * 60 * 1000)) + 1);
+}
+
+/**
+ * Adaptive-precision percentage formatter for KPI tiles.
+ *
+ * Rounding a tiny ratio like 2/5000 (0.04%) to a whole number produces
+ * "0%", which reads as "nothing booked" even when there IS activity. This
+ * widens the decimals as the value shrinks so small-but-non-zero numbers
+ * stay visible.
+ *
+ *   100     → "100%"
+ *    12.3   → "12%"
+ *     4.56  → "4.6%"
+ *     0.42  → "0.42%"
+ *     0.04  → "0.04%"
+ *     0.001 → "0.001%"
+ *     0     → "0%"
+ */
+function formatPercent(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '0%';
+  const abs = Math.abs(n);
+  if (abs >= 10)  return `${Math.round(n)}%`;
+  if (abs >= 1)   return `${n.toFixed(1)}%`;
+  if (abs >= 0.1) return `${n.toFixed(2)}%`;
+  // Very small — up to 3 significant figures, trim trailing zeros.
+  return `${Number(n.toPrecision(2))}%`;
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];

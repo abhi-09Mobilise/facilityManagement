@@ -24,6 +24,7 @@ import { PeakBookingTimes } from './widgets/PeakBookingTimes';
 import { RecentActivity } from './widgets/RecentActivity';
 import { FeedbackPanel } from './widgets/FeedbackPanel';
 import { PantryOrdersPanel } from './widgets/PantryOrdersPanel';
+import { BookedTodayDrawer } from './widgets/BookedTodayDrawer';
 import { useLiveDashboardData, type DashboardRange } from './useLiveDashboardData';
 
 export default function SpaceDeskDashboardPage() {
@@ -32,14 +33,24 @@ export default function SpaceDeskDashboardPage() {
   // toggle lets the user switch to 7d / 90d / a custom from–to range.
   const [range, setRange] = useState<DashboardRange>({ kind: 'preset', days: 30 });
 
+  // Drilldown drawer for the "Booked today" KPI tile. Opens when the tile
+  // is clicked; shows every non-cancelled booking that overlaps today
+  // enriched with site + organisation names.
+  const [bookedDrawerOpen, setBookedDrawerOpen] = useState(false);
+
   const {
     heroOverlay, kpiOverlay, activityOverlay,
     facilityStatusOverlay, mostBookedOverlay, bookingsOverTimeOverlay, peakTimesOverlay,
     pantryOrdersOverlay, bookingChannelOverlay, feedbackOverlay,
+    bookedTodayDetails,
     sites,
   } = useLiveDashboardData({ siteId, range });
 
   const heroHasLiveFields = Object.keys(heroOverlay).length > 0;
+  // Denominator for the drawer header — mirrors the KPI tile's "/ N".
+  const totalFacilitiesForDrawer = (kpiOverlay['Total facilities']?.value as string | undefined)
+    ? Number(String(kpiOverlay['Total facilities']?.value).replace(/[^0-9]/g, '')) || 0
+    : 0;
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-5 md:space-y-6">
@@ -55,7 +66,12 @@ export default function SpaceDeskDashboardPage() {
       />
 
       {/* 2. KPI tiles */}
-      <KpiTiles liveOverlay={kpiOverlay} />
+      <KpiTiles
+        liveOverlay={kpiOverlay}
+        onTileClick={(label) => {
+          if (label === 'Booked today') setBookedDrawerOpen(true);
+        }}
+      />
 
       {/* 3. Bookings over time (2/3) + Booking channel (1/3) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 md:gap-6">
@@ -96,6 +112,15 @@ export default function SpaceDeskDashboardPage() {
           <PantryOrdersPanel liveOverlay={pantryOrdersOverlay} />
         </div>
       </div>
+
+      {/* "Booked today" drilldown drawer. Lives at the page root so the
+          backdrop + slide-in animation layer above every widget. */}
+      <BookedTodayDrawer
+        open={bookedDrawerOpen}
+        onClose={() => setBookedDrawerOpen(false)}
+        rows={bookedTodayDetails}
+        totalFacilities={totalFacilitiesForDrawer}
+      />
     </div>
   );
 }

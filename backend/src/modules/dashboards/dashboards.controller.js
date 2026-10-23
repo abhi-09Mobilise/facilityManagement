@@ -165,11 +165,34 @@ exports.tenantAdmin = asyncHandler(async function (req, res) {
   );
   const occupiedNow = Number((occupiedCountRow[0] || {}).n || 0);
 
+  // "Booked today" KPI feeds: any booking whose window overlaps today, not
+  // just "active right now". Covers facilities booked for a future slot
+  // today, already-finished morning bookings, and ongoing ones in one shot.
+  // Overlap condition mirrors the per-facility today_booked_minutes query.
+  const todayStatsRow = await query(
+    'SELECT COUNT(DISTINCT b.facility_id)  AS facilities_count, ' +
+    '       COUNT(*)                        AS bookings_count, ' +
+    '       COALESCE(SUM(b.attendee_count), 0) AS seats_count ' +
+    '  FROM `bookings` b ' +
+    '  INNER JOIN `facilities` f ON f.id = b.facility_id ' +
+    " WHERE b.trash = 0 AND b.status IN ('approved', 'pending', 'completed') " +
+    "   AND b.start_at < CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' 00:00:00') " +
+    "   AND b.end_at   > CONCAT(CURDATE(), ' 00:00:00') " +
+    '   AND f.trash = 0 AND f.status = 1 ' + tenantClause,
+    tenantParams
+  );
+  const facilitiesBookedToday = Number((todayStatsRow[0] || {}).facilities_count || 0);
+  const bookingsToday         = Number((todayStatsRow[0] || {}).bookings_count   || 0);
+  const seatsBookedToday      = Number((todayStatsRow[0] || {}).seats_count      || 0);
+
   return ok(res, {
     summary: {
       total_facilities: totalFacilities,
       occupied_now: occupiedNow,
       free_now: Math.max(0, totalFacilities - occupiedNow),
+      facilities_booked_today: facilitiesBookedToday,
+      bookings_today: bookingsToday,
+      seats_booked_today: seatsBookedToday,
     },
     per_facility: perFacility,
     as_of: new Date().toISOString(),

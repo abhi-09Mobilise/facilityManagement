@@ -97,9 +97,11 @@ export default function BuildingsListPage() {
 
   const columns: GridColDef<BuildingRow>[] = [
     { field: '_sno', headerName: 'S.No', width: 80, sortable: false, filterable: false },
-    { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
+    { field: 'organisation_name', headerName: 'Organisation', width: 180,
+      valueGetter: (_v, row) => row.organisation_name || '—' },
     { field: 'site_name', headerName: 'Site', width: 180,
       valueGetter: (_v, row) => row.site_name || row.site_id },
+    { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },
     { field: 'code', headerName: 'Code', width: 110 },
     {
       field: 'status', headerName: 'Status', width: 140, sortable: false,

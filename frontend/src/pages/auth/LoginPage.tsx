@@ -8,7 +8,7 @@
 // Behaviour preserved from the previous version: login(), error formatting,
 // ?next= deep-link bounce, /forgot-password and /register routes.
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Building2, Eye, EyeOff, User as UserIcon, Lock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
@@ -46,6 +46,11 @@ export default function LoginPage() {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Ref so pressing Enter in the username field can jump focus to the
+  // password field instead of submitting an incomplete form (noValidate
+  // means the browser won't block the submit — we handle it here).
+  const passwordRef = useRef<HTMLInputElement | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -158,6 +163,12 @@ export default function LoginPage() {
                     spellCheck={false}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        passwordRef.current?.focus();
+                      }
+                    }}
                     className="w-full rounded-[10px] border border-line-2 bg-card py-2.5 pl-10 pr-3 text-sm outline-none transition-colors focus:border-indigo focus:ring-[3px] focus:ring-indigo-soft"
                   />
                 </div>
@@ -171,6 +182,7 @@ export default function LoginPage() {
                   <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
                   <input
                     id="password"
+                    ref={passwordRef}
                     required
                     type={showPwd ? 'text' : 'password'}
                     autoComplete="current-password"

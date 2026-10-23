@@ -46,4 +46,19 @@ router.get('/health', function (_req, res) {
   return res.json({ status: true, msg: 'ok' });
 });
 
+// Embassy SSO smoke-test endpoint. Any authenticated FMS JWT works — real
+// FMS login OR a token exchanged via /auth/sso/embassy. Returns req.user
+// so the Embassy team can confirm the handoff round-trip end-to-end.
+const { authRequired } = require('../middleware/auth');
+router.get('/demo', authRequired, function (req, res) {
+  return res.json({
+    status: true,
+    msg: 'Embassy SSO round-trip successful. You are authenticated as this FMS user:',
+    data: {
+      authenticated_as: req.user,
+      server_time: new Date().toISOString(),
+    },
+  });
+});
+
 module.exports = router;

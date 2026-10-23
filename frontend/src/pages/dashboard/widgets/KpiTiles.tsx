@@ -15,7 +15,7 @@ function slug(label: string): string {
 
 const iconFor: Record<string, { Icon: React.ElementType; bg: string; fg: string }> = {
   'Total facilities':       { Icon: Building2,    bg: 'bg-blue-50 dark:bg-blue-950/40',   fg: 'text-blue-600 dark:text-blue-400' },
-  'Booked right now':       { Icon: DoorOpen,     bg: 'bg-orange-50 dark:bg-orange-950/40', fg: 'text-orange-600 dark:text-orange-400' },
+  'Booked today':           { Icon: DoorOpen,     bg: 'bg-orange-50 dark:bg-orange-950/40', fg: 'text-orange-600 dark:text-orange-400' },
   'Bookings · 30 days':     { Icon: CalendarDays, bg: 'bg-emerald-50 dark:bg-emerald-950/40',fg: 'text-emerald-600 dark:text-emerald-400' },
   'Average feedback':       { Icon: Star,         bg: 'bg-amber-50 dark:bg-amber-950/40',  fg: 'text-amber-600 dark:text-amber-400' },
   'Pantry orders':          { Icon: Coffee,       bg: 'bg-rose-50 dark:bg-rose-950/40',   fg: 'text-rose-600 dark:text-rose-400' },
@@ -24,7 +24,7 @@ const iconFor: Record<string, { Icon: React.ElementType; bg: string; fg: string 
 
 const sparkColorFor: Record<string, string> = {
   'Total facilities':       '#2563eb',
-  'Booked right now':       '#f97316',
+  'Booked today':           '#f97316',
   'Bookings · 30 days':     '#10b981',
   'Average feedback':       '#f59e0b',
   'Pantry orders':          '#f43f5e',
@@ -36,18 +36,35 @@ interface KpiTilesProps {
   // from dashboardsApi overrides the sample '48'). Missing labels fall
   // back to sample values.
   liveOverlay?: Record<string, Partial<KpiTile>>;
+  // Called when a drilldown-enabled tile is clicked. Only the labels listed
+  // in CLICKABLE_LABELS are wired up — everything else stays non-interactive
+  // so we don't fake a drill-down the page can't service.
+  onTileClick?: (label: string) => void;
 }
 
-export function KpiTiles({ liveOverlay }: KpiTilesProps = {}) {
+// Tiles that have a drilldown panel. Non-matching labels render as static.
+const CLICKABLE_LABELS = new Set<string>(['Booked today']);
+
+export function KpiTiles({ liveOverlay, onTileClick }: KpiTilesProps = {}) {
   const tiles = getKpiTiles(liveOverlay);
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      {tiles.map((t) => <Tile key={t.label} tile={t} />)}
+      {tiles.map((t) => (
+        <Tile
+          key={t.label}
+          tile={t}
+          onClick={
+            onTileClick && CLICKABLE_LABELS.has(t.label)
+              ? () => onTileClick(t.label)
+              : undefined
+          }
+        />
+      ))}
     </div>
   );
 }
 
-function Tile({ tile }: { tile: KpiTile }) {
+function Tile({ tile, onClick }: { tile: KpiTile; onClick?: () => void }) {
   const { Icon, bg, fg } = iconFor[tile.label] ?? { Icon: Building2, bg: 'bg-slate-50 dark:bg-slate-800', fg: 'text-slate-600 dark:text-slate-400' };
   const sparkColor = sparkColorFor[tile.label] ?? '#64748b';
   const { mode } = useThemeMode();
@@ -95,8 +112,21 @@ function Tile({ tile }: { tile: KpiTile }) {
   // the "spark" slot. Everything else uses an area/line sparkline.
   const isTotalFacilities = tile.label === 'Total facilities';
 
+  const isClickable = typeof onClick === 'function';
+  const interactiveClasses = isClickable
+    ? 'cursor-pointer transition-shadow hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500'
+    : '';
+
   return (
-    <div className="relative rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 shadow-sm p-4 overflow-hidden flex flex-col">
+    <div
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={isClickable ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); }
+      } : undefined}
+      className={`relative rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 shadow-sm p-4 overflow-hidden flex flex-col ${interactiveClasses}`}
+    >
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{tile.label}</div>
@@ -106,7 +136,7 @@ function Tile({ tile }: { tile: KpiTile }) {
             {/* BUG-03 fix: denominator comes from the overlay's `max` (set to
                 the real total-facilities count) instead of the hardcoded
                 "/ 48". Hidden entirely when max is unknown. */}
-            {tile.label === 'Booked right now' && typeof tile.max === 'number' && (
+            {tile.label === 'Booked today' && typeof tile.max === 'number' && (
               <span className="text-slate-400 dark:text-slate-500 text-sm">/ {tile.max}</span>
             )}
           </div>

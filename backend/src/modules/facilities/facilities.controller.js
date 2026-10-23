@@ -109,11 +109,13 @@ exports.list = asyncHandler(async function (req, res) {
     '       f.description, f.terms_and_conditions, f.image_url, f.layout_json, f.requires_approval, f.shared_booking, ' +
     '       f.facility_approver_user_id, f.public_listed, ' +
     '       f.status, f.created_at, ' +
-    '       t.name AS tenant_name, s.name AS site_name, fl.name AS floor_name ' +
+    '       t.name AS tenant_name, s.name AS site_name, fl.name AS floor_name, ' +
+    '       o.name AS organisation_name ' +
     '  FROM `facilities` f ' +
-    '  LEFT JOIN `tenants` t  ON t.id  = f.tenant_id ' +
-    '  LEFT JOIN `sites`   s  ON s.id  = f.site_id ' +
-    '  LEFT JOIN `floors`  fl ON fl.id = f.floor_id ' +
+    '  LEFT JOIN `tenants`       t  ON t.id  = f.tenant_id ' +
+    '  LEFT JOIN `sites`         s  ON s.id  = f.site_id ' +
+    '  LEFT JOIN `organisations` o  ON o.id  = s.organisation_id ' +
+    '  LEFT JOIN `floors`        fl ON fl.id = f.floor_id ' +
     ' WHERE ' + whereSql +
     ` ORDER BY f.id DESC LIMIT ${limit} OFFSET ${offset}`,
     params

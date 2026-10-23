@@ -33,6 +33,25 @@ const config = {
     secret: process.env.JWT_SECRET || 'change-me',
     expiresIn: process.env.JWT_EXPIRES_IN || '12h',
   },
+  // Embassy SSO handoff. Embassy mints a short-lived HS256 JWT signed with
+  // a shared secret; FMS verifies it with the same secret and exchanges it
+  // for an FMS JWT via POST /api/auth/sso/embassy.
+  //
+  // Shared secret must be identical on both sides (Embassy and FMS). Treat
+  // it like a password — rotate periodically, never commit, never log.
+  //
+  // Testing locally: set EMBASSY_SHARED_SECRET to any random string and use
+  // `node backend/scripts/mint-test-handoff.js --email <user_email>` to
+  // mint tokens as if Embassy sent them.
+  embassy: {
+    ssoEnabled:   String(process.env.EMBASSY_SSO_ENABLED || 'false').toLowerCase() === 'true',
+    sharedSecret: process.env.EMBASSY_SHARED_SECRET || '',
+    issuer:       process.env.EMBASSY_ISSUER   || 'embassy',
+    audience:     process.env.EMBASSY_AUDIENCE || 'fms',
+    // Clock skew tolerance between Embassy's server clock and FMS's.
+    // ±60 seconds is standard; raise if servers aren't NTP-synced.
+    clockToleranceSec: parseInt(process.env.EMBASSY_CLOCK_TOLERANCE_SEC || '60', 10),
+  },
   uploads: {
     dir: process.env.UPLOAD_DIR || './uploads',
     maxBytes: (parseInt(process.env.MAX_UPLOAD_MB || '10', 10)) * 1024 * 1024,

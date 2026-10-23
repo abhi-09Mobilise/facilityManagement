@@ -16,6 +16,13 @@ export interface DashboardPayload {
     total_facilities: number;
     occupied_now: number;
     free_now: number;
+    // Today-overlap stats (any booking whose window intersects CURDATE).
+    // Added for the "Booked today" KPI tile which replaced the live
+    // "Booked right now" counter — same data is already visible in the
+    // Peak Booking Times heatmap, so the tile now covers the daily view.
+    facilities_booked_today?: number;
+    bookings_today?: number;
+    seats_booked_today?: number;
   };
   per_facility: DashboardFacility[];
   as_of: string; // ISO timestamp

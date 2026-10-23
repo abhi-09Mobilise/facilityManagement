@@ -40,11 +40,13 @@ exports.list = asyncHandler(async function (req, res) {
   const rows = await query(
     'SELECT f.id, f.tenant_id, f.site_id, f.building_id, s.organisation_id, ' +
     '       f.name, f.level_number, f.layout_image_url, f.status, f.created_at, ' +
-    '       t.name AS tenant_name, s.name AS site_name, b.name AS building_name ' +
+    '       t.name AS tenant_name, s.name AS site_name, b.name AS building_name, ' +
+    '       o.name AS organisation_name ' +
     '  FROM `floors` f ' +
-    '  LEFT JOIN `tenants`   t ON t.id = f.tenant_id ' +
-    '  LEFT JOIN `sites`     s ON s.id = f.site_id ' +
-    '  LEFT JOIN `buildings` b ON b.id = f.building_id ' +
+    '  LEFT JOIN `tenants`       t ON t.id = f.tenant_id ' +
+    '  LEFT JOIN `sites`         s ON s.id = f.site_id ' +
+    '  LEFT JOIN `organisations` o ON o.id = s.organisation_id ' +
+    '  LEFT JOIN `buildings`     b ON b.id = f.building_id ' +
     ' WHERE ' + where.join(' AND ') +
     ' ORDER BY f.level_number, f.name',
     params

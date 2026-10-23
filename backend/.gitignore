@@ -4,3 +4,7 @@ uploads/*
 !uploads/.gitkeep
 *.log
 .DS_Store
+
+# Legacy — kept to prevent accidental commit of any lingering certs/.
+# HS256 shared secret approach doesn't need keypair files any more.
+certs/

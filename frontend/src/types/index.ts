@@ -114,6 +114,11 @@ export interface Floor {
   id: number;
   tenant_id: number;
   tenant_name?: string;
+  // Derived from the parent site's organisation (floors don't have an
+  // organisation_id column of their own). Masters list uses this to show
+  // the Organisation column alongside Tenant / Site / Building.
+  organisation_id?: number;
+  organisation_name?: string;
   site_id: number;
   site_name?: string;
   // Phase A buildings layer — every floor now belongs to a Building
@@ -245,6 +250,11 @@ export interface Facility {
   status: 0 | 1;
   site_name?: string;
   floor_name?: string;
+  // Derived from the parent site's organisation (facilities don't have an
+  // organisation_id column of their own). Masters list uses this to show
+  // the Organisation column alongside Site / Floor.
+  organisation_id?: number;
+  organisation_name?: string;
   operating_hours?: OperatingHour[];
   approval_chain?: FacilityApprovalChainStep[];
 }

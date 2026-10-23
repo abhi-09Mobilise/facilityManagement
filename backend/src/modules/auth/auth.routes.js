@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const ctrl = require('./auth.controller');
+const ssoCtrl = require('./sso.controller');
 const { authRequired } = require('../../middleware/auth');
 
 // BUG-25 fix: rate-limit the login endpoint so an attacker can't brute-force
@@ -9,14 +10,14 @@ const { authRequired } = require('../../middleware/auth');
 // usernames each with one guess would slip through. This IP-based bucket
 // adds the second line of defence.
 //
-//   • 10 attempts / 15 min / IP for the login route (POST /auth/login)
+//   • 15 attempts / 15 min / IP for the login route (POST /auth/login)
 //   • Successful (2xx) requests don't count towards the budget
 //   • Returns 429 with Retry-After once the limit is hit
 //   • Standard rate-limit headers (RateLimit-*) exposed so API clients can
 //     back off programmatically
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 15,
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
@@ -34,11 +35,27 @@ const passwordRecoveryLimiter = rateLimit({
   message: { status: false, msg: 'Too many requests. Please try again later.' },
 });
 
+// Rate-limit the Embassy SSO exchange endpoint too — a leaked handoff token
+// is harmless once the jti is consumed, but a flood of invalid tokens would
+// still hit the public-key verify step. Shared bucket with password routes.
+const ssoExchangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { status: false, msg: 'Too many SSO attempts. Please try again later.' },
+});
+
 // Public
 router.post('/login',           loginLimiter,            ctrl.login);
 router.post('/register',        ctrl.register);
 router.post('/forgot-password', passwordRecoveryLimiter, ctrl.forgotPassword);
 router.post('/reset-password',  passwordRecoveryLimiter, ctrl.resetPassword);
+
+// Embassy SSO handoff — exchange an RS256 token minted by the Embassy app
+// for a normal FMS JWT. No authRequired (this IS the login).
+router.post('/sso/embassy',     ssoExchangeLimiter,      ssoCtrl.exchange);
 
 // Protected
 router.post('/logout', authRequired, ctrl.logout);

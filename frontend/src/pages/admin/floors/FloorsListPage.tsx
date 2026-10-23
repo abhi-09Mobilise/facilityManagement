@@ -114,6 +114,8 @@ export default function FloorsListPage() {
     { field: '_sno', headerName: 'S.No', width: 80, sortable: false, filterable: false },
     { field: 'tenant_name', headerName: 'Tenant', width: 180,
       valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
+    { field: 'organisation_name', headerName: 'Organisation', width: 180,
+      valueGetter: (_v, row) => row.organisation_name || '—' },
     { field: 'site_id', headerName: 'Site', width: 200,
       valueGetter: (_v, row) => row.site_name || sites.find((s) => s.id === row.site_id)?.name || row.site_id },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 200 },

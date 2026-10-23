@@ -90,6 +90,8 @@ export default function SitesListPage() {
     },
     { field: 'tenant_name', headerName: 'Tenant', width: 180,
       valueGetter: (_v, row) => row.tenant_name || row.tenant_id },
+    { field: 'organisation_name', headerName: 'Organisation', width: 180,
+      valueGetter: (_v, row) => row.organisation_name || '—' },
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 220 },
     { field: 'code', headerName: 'Code', width: 140 },
     { field: 'address', headerName: 'Address', flex: 1.5, minWidth: 240 },
