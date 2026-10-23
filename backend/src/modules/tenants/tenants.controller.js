@@ -41,7 +41,8 @@ exports.list = asyncHandler(async function (req, res) {
     ` ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`,
     params
   );
-  return ok(res, { data: rows, total: total, current_page: page, per_page: limit });
+
+    return ok(res, { data: rows, total: total, current_page: page, per_page: limit });
 });
 
 exports.getOne = asyncHandler(async function (req, res) {

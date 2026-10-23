@@ -20,6 +20,9 @@ const db = require('./db');
 const queries = require('./queries');
 const { toFmShape } = require('./transformer');
 const { mockAggregate } = require('./mock');
+const orgHierarchy = require('./orgHierarchy'); // masters read (org/site/building/floor)
+const fmDb = require('./fmDb');                 // FM write pool (daily sync)
+const importHierarchy = require('./importHierarchy'); // Embassy -> FM upsert worker
 
 const app = express();
 
@@ -99,6 +102,43 @@ app.get('/pantry/aggregated', async function (req, res) {
       msg: 'Embassy aggregator failed',
       detail: err && err.message,
     });
+  }
+});
+
+// --- Org-hierarchy read (masters import) ---
+// GET /org/hierarchy?org_id=<embassy org id, e.g. 13>
+// Returns organisations (pl) + pc→pl map + sites (block) + buildings + floors,
+// all scoped to org_id and trash=0. READ-ONLY. The FM importer upserts from this.
+app.get('/org/hierarchy', async function (req, res) {
+  const orgId = parseInt(req.query.org_id, 10);
+  if (!Number.isFinite(orgId) || orgId <= 0) {
+    return res.status(400).json({ status: false, msg: 'org_id is required' });
+  }
+  try {
+    const data = currentMode() === 'mock'
+      ? orgHierarchy.mockHierarchy(orgId)
+      : await orgHierarchy.fetchHierarchyLive(orgId);
+    return res.json({ status: true, data });
+  } catch (err) {
+    console.error('[bridge] org/hierarchy failed:', err && err.message);
+    return res.status(502).json({ status: false, msg: 'Embassy org-hierarchy read failed', detail: err && err.message });
+  }
+});
+
+// --- Org-hierarchy import (manual trigger for the daily FM sync) ---
+// POST /org/import?org_id=13&tenant_id=10[&dry_run=1]
+// WRITES to the FM DB (upsert). The daily schedule below calls the same
+// worker; this endpoint lets ops run it on demand or dry-run it.
+app.post('/org/import', async function (req, res) {
+  const orgId = parseInt(req.query.org_id || process.env.EMBASSY_ORG_ID || '13', 10);
+  const tenantId = parseInt(req.query.tenant_id || process.env.FM_TENANT_ID || '10', 10);
+  const dryRun = String(req.query.dry_run || '') === '1';
+  try {
+    const data = await importHierarchy.runImport({ orgId, tenantId, dryRun });
+    return res.json({ status: true, data });
+  } catch (err) {
+    console.error('[bridge] org/import failed:', err && err.message);
+    return res.status(502).json({ status: false, msg: 'Embassy->FM import failed', detail: err && err.message });
   }
 });
 
@@ -209,7 +249,52 @@ app.listen(PORT, function () {
   if (currentMode() === 'live') {
     db.verifyConnection();
   }
+  scheduleDailyFmSync();
 });
+
+// --- Daily Embassy -> FM hierarchy sync (worker) ---
+// Opt-in via EMBASSY_SYNC_ENABLED=true so a bridge that's only serving the
+// pantry widget never writes to FM by surprise. Fires once a day at
+// EMBASSY_SYNC_AT (HH:MM, 24h, server-local; default 02:30), self-re-arming.
+function scheduleDailyFmSync() {
+  if (String(process.env.EMBASSY_SYNC_ENABLED || '').toLowerCase() !== 'true') {
+    console.log('[bridge] daily FM sync OFF (set EMBASSY_SYNC_ENABLED=true to enable)');
+    return;
+  }
+  fmDb.verifyConnection();
+  const [hh, mm] = String(process.env.EMBASSY_SYNC_AT || '02:30').split(':');
+  const hour = Math.min(23, Math.max(0, parseInt(hh, 10) || 2));
+  const minute = Math.min(59, Math.max(0, parseInt(mm, 10) || 30));
+  const orgId = Number(process.env.EMBASSY_ORG_ID || 13);
+  const tenantId = Number(process.env.FM_TENANT_ID || 10);
+
+  function msUntil(h, m) {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(h, m, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next.getTime() - now.getTime();
+  }
+  function arm() {
+    const delay = msUntil(hour, minute);
+    console.log(`[bridge] next FM sync in ~${Math.round(delay / 60000)} min (daily ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}, org ${orgId} -> tenant ${tenantId})`);
+    setTimeout(async function tick() {
+      try {
+        const r = await importHierarchy.runImport({ orgId, tenantId, dryRun: false });
+        console.log(
+          `[bridge] daily FM sync done: orgs(+${r.stats.organisations.inserted}/~${r.stats.organisations.updated}) ` +
+          `sites(+${r.stats.sites.inserted}/~${r.stats.sites.updated}) buildings(+${r.stats.buildings.inserted}/~${r.stats.buildings.updated}) ` +
+          `floors(+${r.stats.floors.inserted}/~${r.stats.floors.updated}) skipped=${r.skipped.length}`
+        );
+        if (r.skipped.length) r.skipped.forEach((s) => console.warn('   [skip] ' + s));
+      } catch (e) {
+        console.error('[bridge] daily FM sync FAILED:', e && e.message);
+      }
+      arm(); // re-arm for the next day regardless of outcome
+    }, delay);
+  }
+  arm();
+}
 
 // --- Tiny date helpers (local-tz; the bridge is deployed in the DB's tz) ---
 function pad2(n) { return (n < 10 ? '0' : '') + n; }

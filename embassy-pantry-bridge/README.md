@@ -138,6 +138,64 @@ Open (no secret needed). Returns mode + uptime.
 
 ---
 
+## Daily Embassy → FM org-hierarchy sync (worker)
+
+Besides serving the pantry widget, the bridge runs a **daily worker** that
+copies the Embassy org hierarchy into the FM database:
+
+```
+0_org_pl          -> organisations   (source_ref = pl_id)
+0_org_pc          -> lookup only (block.pc_id -> pl_id -> organisation)
+0_org_pc_block    -> sites           (source_ref = id)
+0_org_pc_building -> buildings       (source_ref = id)
+0_org_pc_floor    -> floors          (source_ref = id, floor_img -> layout_image_url)
+```
+
+The bridge is the natural home for this: it already holds the Embassy
+connection, and *all* Embassy data (pantry + hierarchy) flows through here.
+
+**Important — this is the one place the bridge WRITES.** The pantry path is
+read-only-over-HTTP; this worker writes to the FM DB, so the bridge now needs
+`FM_DB_*` creds and network access to the FM MySQL (see `.env.example`). If you
+prefer to keep the bridge write-free, run the import from the FM side instead —
+but by design we keep one Embassy→FM worker here.
+
+Idempotent: every FM row is keyed to its Embassy PK via
+`(tenant_id, 'embassy', source_ref)` (FM migration `051`), so re-running UPSERTS
+— a daily run never duplicates. Rows whose parent is trashed/out-of-scope are
+skipped and auto-import once the parent appears.
+
+### Enabling
+
+In `.env`:
+```
+EMBASSY_SYNC_ENABLED=true     # off by default
+EMBASSY_SYNC_AT=02:30         # server-local HH:MM
+EMBASSY_ORG_ID=13             # Embassy org -> FM tenant
+FM_TENANT_ID=10
+FM_DB_HOST=127.0.0.1
+FM_DB_PORT=3306
+FM_DB_USER=fm_sync
+FM_DB_PASSWORD=...
+FM_DB_NAME=socampus_fm
+```
+On boot the bridge logs when the next sync will fire and re-arms after each run.
+
+### `POST /org/import` (manual trigger)
+
+```
+POST /org/import?org_id=13&tenant_id=10[&dry_run=1]
+Headers: X-Bridge-Secret: <BRIDGE_SECRET>
+```
+Runs the same worker on demand. `dry_run=1` does the full upsert then rolls it
+back — writes nothing, returns the would-be counts. Handy to verify wiring
+before enabling the daily schedule.
+
+> The FM user for `FM_DB_*` only needs INSERT/UPDATE/SELECT on
+> `organisations`, `sites`, `buildings`, `floors`. Grant it no more than that.
+
+---
+
 ## Wiring from the FM backend
 
 In `backend/.env`:

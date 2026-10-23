@@ -179,6 +179,18 @@ app (every 5 minutes is enough):
 */5 * * * *  curl -fsS "https://fms.onmobilise.com/api/cron/pre-end-notify?key=YOUR_SECRET" >/dev/null
 ```
 
+All cron endpoints are **POST** and gated by the same `CRON_SECRET`.
+
+### Daily Embassy org-hierarchy sync
+
+This does **not** run from FM's cron. It's a worker **inside the
+embassy-pantry-bridge** service (the bridge already owns the Embassy
+connection), which reads the Embassy org tree and writes
+organisations/sites/buildings/floors into the FM DB on a daily schedule.
+Enable it with `EMBASSY_SYNC_ENABLED=true` + `FM_DB_*` creds in the bridge's
+`.env`. See `embassy-pantry-bridge/README.md` → "Daily Embassy → FM
+org-hierarchy sync".
+
 ---
 
 ## 6. Frontend build
