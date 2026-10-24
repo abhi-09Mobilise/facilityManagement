@@ -590,3 +590,4 @@ function NavbarRefreshButton() {
     </button>
   );
 }
+

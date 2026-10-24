@@ -8,9 +8,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Box, Button, Chip, CircularProgress, MenuItem, Stack, Switch, TextField, Typography,
+  Box, Button, Chip, CircularProgress, IconButton, MenuItem, Stack, Switch,
+  TextField, Tooltip, Typography,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import QrCode2Icon from '@mui/icons-material/QrCode2';
 import * as XLSX from 'xlsx';
 import type { GridColDef } from '@mui/x-data-grid';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -24,6 +26,7 @@ import { useMastersFilterOptional } from '@/contexts/MastersFilterContext';
 import { useTenantScope } from '@/context/TenantScopeContext';
 import { useRegisterRefresh } from '@/context/RefreshContext';
 import type { Building, Facility, FacilityType, Site } from '@/types';
+import FacilityQrDialog from './components/FacilityQrDialog';
 
 const TYPE_LABEL: Record<FacilityType, string> = {
   meeting_room:    'Meeting room',
@@ -64,6 +67,11 @@ export default function FacilitiesListPage() {
   const [draftBuildingId, setDraftBuildingId] = useState<number | ''>('');
   const [draftType, setDraftType] = useState<'' | FacilityType>('');
   const [buildings, setBuildings] = useState<Building[]>([]);
+
+  // QR dialog state — opens when the per-row QR icon is clicked. The dialog
+  // owns its own print / download; we just supply the facility it should
+  // render a check-in URL for.
+  const [qrDialogFor, setQrDialogFor] = useState<Facility | null>(null);
 
   async function exportToExcel() {
     setExporting(true);
@@ -193,6 +201,30 @@ export default function FacilitiesListPage() {
         : <Chip size="small" label="auto" />,
     },
     {
+      field: '_qr',
+      headerName: 'QR',
+      width: 72,
+      sortable: false,
+      filterable: false,
+      align: 'center',
+      headerAlign: 'center',
+      renderCell: (p) => (
+        <Tooltip title="Show check-in QR">
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              // Stop the row-click handler (which opens the edit page) from
+              // firing when the QR icon is clicked.
+              e.stopPropagation();
+              setQrDialogFor(p.row);
+            }}
+          >
+            <QrCode2Icon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      ),
+    },
+    {
       field: 'status', headerName: 'Status', width: 140, sortable: false,
       renderCell: (p) => {
         const isActive = p.row.status === 1;
@@ -318,6 +350,18 @@ export default function FacilitiesListPage() {
         onPageChange={(p, ps) => { setPage(p); setPageSize(ps); }}
         onEdit={(row) => navigate(`${editBase}/${row.id}`)}
         onDelete={async (row) => { await facilitiesApi.remove(row.id); load(); }}
+      />
+
+      <FacilityQrDialog
+        open={qrDialogFor !== null}
+        onClose={() => setQrDialogFor(null)}
+        facility={qrDialogFor && {
+          id: qrDialogFor.id,
+          name: qrDialogFor.name,
+          type: qrDialogFor.type,
+          site_name: qrDialogFor.site_name,
+          floor_name: qrDialogFor.floor_name,
+        }}
       />
     </Box>
   );
