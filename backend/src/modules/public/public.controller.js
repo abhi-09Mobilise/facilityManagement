@@ -139,7 +139,12 @@ exports.facility = asyncHandler(async function (req, res) {
 // holder already knows.
 exports.checkin = asyncHandler(async function (req, res) {
   const code = checkinCode.normalize((req.body || {}).code);
-  console.log("CODE", code)
+  // Optional facility scope — when a wall QR encodes `?facility=<id>`, the
+  // client forwards it as `scope_facility_id`. We reject codes whose booking
+  // is for a different facility, so someone standing at Boardroom A can't
+  // check in a Hot-Desks booking by mistake. Absent = unscoped (keeps the
+  // legacy generic QR working for backward compatibility).
+  const scopeFacilityId = intOrNull((req.body || {}).scope_facility_id);
   if (!code) {
     return fail(res, 'Enter the check-in code from your confirmation email.', 400,
       { code: 'CHECKIN_CODE_INVALID' });
@@ -150,7 +155,7 @@ exports.checkin = asyncHandler(async function (req, res) {
   // resolved per-scope (facility -> org -> tenant -> env) via graceConfig.
   const win = checkinWindow.windowColumns('b.start_at', graceConfig.graceSqlExpr());
   const rows = await query(
-    'SELECT b.id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
+    'SELECT b.id, b.facility_id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
     '       f.name AS facility_name, f.type AS facility_type, ' +
     '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname, ' +
     '       ' + win.columns + ' ' +
@@ -166,6 +171,17 @@ exports.checkin = asyncHandler(async function (req, res) {
       404, { code: 'CHECKIN_CODE_UNKNOWN' });
   }
   const b = rows[0];
+
+  // Enforce facility scope before any state mutation. Message names the
+  // correct facility so the user knows which kiosk to use.
+  if (scopeFacilityId !== null && Number(b.facility_id) !== scopeFacilityId) {
+    return fail(
+      res,
+      `This QR is for a different facility. Your booking is for "${b.facility_name || 'another facility'}" — please scan that facility's QR instead.`,
+      403,
+      { code: 'CHECKIN_WRONG_FACILITY' }
+    );
+  }
 
   // Debug: see exactly what the DB clock thinks vs the booking start.
   console.log('[checkin]', {
@@ -250,13 +266,16 @@ exports.checkin = asyncHandler(async function (req, res) {
 // booking is checked in (no window), until checked out. Idempotent.
 exports.checkout = asyncHandler(async function (req, res) {
   const code = checkinCode.normalize((req.body || {}).code);
+  // Mirror the check-in scope guard so a wrong-facility kiosk also can't
+  // close out someone else's active session.
+  const scopeFacilityId = intOrNull((req.body || {}).scope_facility_id);
   if (!code) {
     return fail(res, 'Enter the check-in code from your confirmation email.', 400,
       { code: 'CHECKIN_CODE_INVALID' });
   }
 
   const rows = await query(
-    'SELECT b.id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
+    'SELECT b.id, b.facility_id, b.status, b.start_at, b.end_at, b.checked_in_at, b.checked_out_at, ' +
     '       f.name AS facility_name, f.type AS facility_type, ' +
     '       u.email AS booker_email, u.name AS booker_name, u.lname AS booker_lname ' +
     '  FROM `bookings`   b ' +
@@ -270,6 +289,16 @@ exports.checkout = asyncHandler(async function (req, res) {
       404, { code: 'CHECKIN_CODE_UNKNOWN' });
   }
   const b = rows[0];
+
+  if (scopeFacilityId !== null && Number(b.facility_id) !== scopeFacilityId) {
+    return fail(
+      res,
+      `This QR is for a different facility. Your booking is for "${b.facility_name || 'another facility'}" — please scan that facility's QR instead.`,
+      403,
+      { code: 'CHECKIN_WRONG_FACILITY' }
+    );
+  }
+
   const card = {
     facility_name: b.facility_name,
     facility_type: b.facility_type,

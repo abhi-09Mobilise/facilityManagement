@@ -27,6 +27,11 @@ export interface CurrentUser {
   role: Role;
   tenant_id: number | null;
   tenant_name?: string | null;
+  // The backend's publicUser() already ships these; declaring them lets
+  // callers (e.g. the Check-in QR page) key off the current user's org
+  // without a secondary API call.
+  organisation_id?: number | null;
+  organisation_name?: string | null;
   department_id?: number | null;
 }
 

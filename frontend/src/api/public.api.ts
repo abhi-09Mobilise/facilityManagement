@@ -71,16 +71,27 @@ function parseCheckinOutcome(data: unknown): CheckinOutcome {
   };
 }
 
+// Builds the request body for /public/checkin + /public/checkout. When a
+// wall QR encodes `?facility=<id>`, the page forwards it as
+// `scope_facility_id` so the backend can reject a code whose booking is
+// for a different facility. Omitted entirely when the kiosk is unscoped
+// (legacy generic QR still works).
+function checkinBody(code: string, scopeFacilityId?: number | null): Record<string, unknown> {
+  const body: Record<string, unknown> = { code };
+  if (scopeFacilityId != null) body.scope_facility_id = scopeFacilityId;
+  return body;
+}
+
 export const publicApi = {
   // validateStatus lets us read the JSON body on 4xx (window/approval errors)
   // instead of axios throwing before we can show a friendly reason.
-  checkin: (code: string): Promise<CheckinOutcome> =>
+  checkin: (code: string, scopeFacilityId?: number | null): Promise<CheckinOutcome> =>
     pub
-      .post('/public/checkin', { code }, { validateStatus: () => true })
+      .post('/public/checkin', checkinBody(code, scopeFacilityId), { validateStatus: () => true })
       .then((r) => parseCheckinOutcome(r.data)),
-  checkout: (code: string): Promise<CheckinOutcome> =>
+  checkout: (code: string, scopeFacilityId?: number | null): Promise<CheckinOutcome> =>
     pub
-      .post('/public/checkout', { code }, { validateStatus: () => true })
+      .post('/public/checkout', checkinBody(code, scopeFacilityId), { validateStatus: () => true })
       .then((r) => parseCheckinOutcome(r.data)),
   landing: (slug: string) =>
     pub.get<{ status: boolean; data?: LandingPayload; msg?: string }>(`/public/t/${encodeURIComponent(slug)}`).then((r) => r.data),

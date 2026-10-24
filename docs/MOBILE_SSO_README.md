@@ -22,7 +22,7 @@ token for every FMS API call.
 - A **test handoff token** (short-lived, for Postman verification)
 
 You will **not** be given:
-- The Embassy private key
+- The shared secret (Embassy + FMS use the same one, held by both backends)
 - The FMS JWT secret
 - The .env file contents
 
@@ -67,7 +67,7 @@ Embassy frontend
 Embassy backend
    │
    │ Verifies the Embassy session
-   │ Signs an RS256 JWT with Embassy's private key
+   │ Signs an HS256 JWT with the shared secret
    │ Payload: { email, sub, name, iss: 'embassy', aud: 'fms', exp, iat }
    │
    │ Response: { handoff_token: "eyJ..." }
@@ -79,7 +79,7 @@ Embassy / mobile frontend
    ▼
 FMS backend
    │
-   │ Verifies with Embassy public key
+   │ Verifies the signature using the shared secret
    │ Verifies iss=embassy, aud=fms, exp, replay
    │ Extracts `email` from the verified payload
    │ Looks up user: SELECT * FROM users WHERE email = ?
@@ -183,7 +183,7 @@ const facilities = await fmsApi('/api/facilities?limit=50');
 | HTTP | `msg` | What it means | What mobile should do |
 |---|---|---|---|
 | 400 | `Handoff token is missing the required "email" claim` | Embassy didn't include email in payload | Flag to Embassy team |
-| 401 | `Invalid handoff token: ...` | Signature failed | Keys mismatch — contact FMS team |
+| 401 | `Invalid handoff token: ...` | Signature failed | Shared secret mismatch between Embassy and FMS — contact FMS team |
 | 401 | `Handoff token has expired` | Token > 60s old | Mint a fresh one |
 | 401 | `Handoff token already used (replay rejected)` | Already exchanged | Mint a fresh one |
 | 401 | `User is not provisioned in FMS. Please contact your administrator.` | Email not in FMS DB | Ask FMS admin to create the user |
@@ -196,8 +196,9 @@ const facilities = await fmsApi('/api/facilities?limit=50');
 
 ## FAQ
 
-**Q: Do I need the private key or any secret?**
-No. All signing happens server-side. You only ever hit HTTP endpoints.
+**Q: Do I need any secret or key?**
+No. All signing happens server-side (Embassy + FMS share a secret, but
+only their backends hold it). You only ever hit HTTP endpoints.
 
 **Q: What if the FMS access token expires mid-session?**
 Call the SSO flow again (new handoff → exchange). The mobile app should

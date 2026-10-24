@@ -42,6 +42,17 @@ export default function CheckinPage() {
     if (pre) setCode(pre.slice(0, 8));
   }, [params]);
 
+  // Facility scope lifted from the wall QR URL (?facility=<id>). Forwarded
+  // to the API so the backend can reject a code whose booking is for a
+  // different facility — standing at Boardroom A can't accept a Hot-Desks
+  // booking. Unscoped (null) when someone opens the raw /checkin URL.
+  const scopeFacilityId = (() => {
+    const raw = params.get('facility');
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+
   useEffect(() => { if (phase === 'form') inputRef.current?.focus(); }, [phase]);
 
   function onChange(v: string) {
@@ -59,7 +70,7 @@ export default function CheckinPage() {
     }
     setPhase('loading');
     try {
-      const out = await publicApi.checkin(code);
+      const out = await publicApi.checkin(code, scopeFacilityId);
       setResult(out);
       setPhase('done');
     } catch {
@@ -71,7 +82,7 @@ export default function CheckinPage() {
   async function doCheckout() {
     setPhase('loading');
     try {
-      const out = await publicApi.checkout(code);
+      const out = await publicApi.checkout(code, scopeFacilityId);
       setResult(out);
       setPhase('done');
     } catch {

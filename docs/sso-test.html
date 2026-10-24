@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>SSO Test</title>
+  <style>
+    body { font-family: sans-serif; max-width: 700px; margin: 3rem auto; padding: 1rem; }
+    button {
+      background: #3182ce; color: white; border: none;
+      padding: 1rem 2rem; font-size: 1rem; border-radius: 6px;
+      cursor: pointer; margin: 0 0.5rem 0.5rem 0;
+    }
+    button.prod { background: #38a169; }
+    button:hover { opacity: 0.85; }
+    pre {
+      background: #1a202c; color: #e2e8f0; padding: 1rem; border-radius: 6px;
+      white-space: pre-wrap; word-break: break-all; margin-top: 1rem;
+      font-size: 0.85rem;
+    }
+    .url { color: #718096; font-size: 0.85rem; margin-top: 0.3rem; }
+  </style>
+</head>
+<body>
+  <h2>SSO API Test</h2>
+
+  <button onclick="test('http://localhost:4002/api/auth/sso/embassy')">
+    Test LOCAL
+  </button>
+  <div class="url">POST http://localhost:4002/api/auth/sso/embassy</div>
+
+  <br><br>
+
+  <button class="prod" onclick="test('https://fms.onmobilise.com/api/auth/sso/embassy')">
+    Test PRODUCTION
+  </button>
+  <div class="url">POST https://fms.onmobilise.com/api/auth/sso/embassy</div>
+
+  <pre id="out">Click a button to test...</pre>
+
+  <script>
+    async function test(url) {
+      const out = document.getElementById('out');
+      out.textContent = 'Calling ' + url + ' ...';
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ handoff_token: 'test' }),
+        });
+        const data = await r.json();
+        out.textContent = 'URL: ' + url + '\nHTTP ' + r.status + '\n\n' + JSON.stringify(data, null, 2);
+      } catch (err) {
+        out.textContent = 'URL: ' + url + '\n\nERROR: ' + err.message + '\n\n(agar CORS error hai, server ki .env me CORS_ORIGIN me add karna hoga)';
+      }
+    }
+  </script>
+</body>
+</html>
