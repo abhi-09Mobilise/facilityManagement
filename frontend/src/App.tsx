@@ -47,6 +47,9 @@ const PublicRatePage            = lazy(() => import('@/pages/public/PublicRatePa
 // --- Lazy: M15 QR arrival check-in (public, no login) -------------------
 const CheckinPage               = lazy(() => import('@/pages/checkin/CheckinPage'));
 
+// --- Lazy: doc 11 kiosk booking (public, tenant-bound token) ------------
+const KioskPage                 = lazy(() => import('@/pages/kiosk/KioskPage'));
+
 // --- Lazy: heavy admin dashboard (recharts ~95KB gz) --------------------
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const SpaceDeskDashboardPage = lazy(() => import('@/pages/dashboard/SpaceDeskDashboardPage'));
@@ -135,6 +138,9 @@ export default function App() {
 
             {/* M15 - QR arrival check-in (no auth, no AppLayout) */}
             <Route path="/checkin"                                  element={<CheckinPage />} />
+
+            {/* doc 11 - Kiosk booking (no auth, tenant bound via ?token=) */}
+            <Route path="/kiosk"                                    element={<KioskPage />} />
 
             {/* F03 - Public portal (no auth, no AppLayout) */}
             <Route path="/p/:slug"                                  element={<PublicLandingPage />} />

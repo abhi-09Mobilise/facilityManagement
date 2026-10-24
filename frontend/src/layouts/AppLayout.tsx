@@ -25,7 +25,7 @@ import {
   Menu, LogOut, Building2, Users, Building, Layers,
   Sparkles, UsersRound, UtensilsCrossed, CalendarCheck, FolderCheck, BookOpen,
   X, LayoutDashboard, FolderTree, ChevronDown, ChevronRight, Coffee, Network,
-  Warehouse, RefreshCw, Boxes, Activity, ShieldCheck, Sun, Moon,
+  Warehouse, RefreshCw, Boxes, Activity, ShieldCheck, Sun, Moon, MonitorSmartphone,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { RefreshProvider, useRefresh } from '@/context/RefreshContext';
@@ -225,6 +225,19 @@ function AppLayoutInner() {
   function handleLogout() {
     logout();
     navigate('/login');
+  }
+
+  // doc 11 - kiosk launcher in the profile menu. Admin-only; optionally pinned
+  // to one tenant (Embassy) via VITE_KIOSK_TENANT_ID so only that tenant's
+  // admins see it. Unset → shown to all admins.
+  const KIOSK_TENANT = import.meta.env.VITE_KIOSK_TENANT_ID;
+  const canOpenKiosk =
+    ['super_admin', 'tenant_admin', 'org_admin'].includes(user.role) &&
+    (!KIOSK_TENANT || String(user.tenant_id) === String(KIOSK_TENANT));
+
+  function openKiosk() {
+    // Public kiosk page; the flow picks tenant -> organisation -> facility.
+    window.open('/kiosk', '_blank');
   }
 
   const brandTitle =
@@ -454,6 +467,15 @@ function AppLayoutInner() {
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="truncate">{user.name || user.username}</DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {canOpenKiosk && (
+                <>
+                  <DropdownMenuItem onSelect={openKiosk}>
+                    <MonitorSmartphone className="h-4 w-4" />
+                    Open kiosk
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onSelect={handleLogout}>
                 <LogOut className="h-4 w-4" />
                 Logout

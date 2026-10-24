@@ -4,6 +4,7 @@
 // or trigger the 401-bounce interceptor of the regular client.
 
 import axios from 'axios';
+import type { FacilityLayout, FacilityLayoutV1 } from '@/types';
 
 const baseURL = (import.meta.env.VITE_API_BASE_URL || '');
 const pub = axios.create({ baseURL });
@@ -122,3 +123,58 @@ export const publicApi = {
       `/public/ratings/${encodeURIComponent(token)}`, payload, { validateStatus: () => true }
     ).then((r) => r.data),
 };
+
+// ===== doc 11 - Kiosk booking (public; pick tenant -> organisation -> facility)
+export interface KioskTenant { id: number; name: string; }
+export interface KioskOrg { id: number; name: string; }
+export interface KioskSite { id: number; name: string; address?: string | null; }
+export interface KioskFacilityCard {
+  id: number; name: string; type: string; capacity: number;
+  image_url?: string | null; site_name?: string; floor_name?: string | null;
+}
+export interface KioskFacilityDetail {
+  id: number; name: string; type: string; capacity: number;
+  // Raw layout for the desk canvas — DeskPicker accepts string/object/legacy/null.
+  layout_json: string | FacilityLayout | FacilityLayoutV1 | null;
+}
+export interface KioskCheck {
+  conflict?: boolean; mode?: string; capacity?: number;
+  seats_remaining?: number; occupied_desks?: string[];
+}
+export interface KioskSlot { start: string; end: string; conflict: boolean; seats_taken: number; seats_remaining: number; }
+export interface KioskDay { facility_id: number; date: string; mode: string; capacity: number; slots: KioskSlot[]; closed?: boolean; }
+export interface KioskIdentity { id: number; name: string | null; masked_email: string | null; }
+
+type Env<T> = { status: boolean; msg?: string; code?: string; data?: T };
+const vs = { validateStatus: () => true as const };
+
+export const kioskApi = {
+  tenants: () =>
+    pub.get<Env<{ tenants: KioskTenant[] }>>('/public/kiosk/tenants', vs).then((r) => r.data),
+  organisations: (tenantId: number) =>
+    pub.get<Env<{ tenant: KioskTenant; organisations: KioskOrg[] }>>('/public/kiosk/organisations', { params: { tenant_id: tenantId }, ...vs }).then((r) => r.data),
+  sites: (tenantId: number, orgId: number) =>
+    pub.get<Env<{ sites: KioskSite[] }>>('/public/kiosk/sites', { params: { tenant_id: tenantId, org_id: orgId }, ...vs }).then((r) => r.data),
+  facilities: (tenantId: number, siteId: number) =>
+    pub.get<Env<{ site: KioskSite; facilities: KioskFacilityCard[] }>>('/public/kiosk/facilities', { params: { tenant_id: tenantId, site_id: siteId }, ...vs }).then((r) => r.data),
+  facilityDetail: (tenantId: number, facilityId: number) =>
+    pub.get<Env<{ facility: KioskFacilityDetail }>>(`/public/kiosk/facilities/${facilityId}`, { params: { tenant_id: tenantId }, ...vs }).then((r) => r.data),
+  check: (tenantId: number, facilityId: number, startAt: string, endAt: string) =>
+    pub.get<Env<KioskCheck>>(`/public/kiosk/facilities/${facilityId}/check`, { params: { tenant_id: tenantId, start_at: startAt, end_at: endAt }, ...vs }).then((r) => r.data),
+  day: (tenantId: number, facilityId: number, date: string) =>
+    pub.get<Env<KioskDay>>(`/public/kiosk/facilities/${facilityId}/day`, { params: { tenant_id: tenantId, date }, ...vs }).then((r) => r.data),
+  identify: (tenantId: number, identifier: string) =>
+    pub.post<Env<{ user: KioskIdentity }>>('/public/kiosk/identify', { tenant_id: tenantId, identifier }, vs).then((r) => r.data),
+  book: (tenantId: number, payload: {
+    facility_id: number; start_at: string; end_at: string; title?: string;
+    assignments: { identifier: string; desk_id?: string | null }[];
+  }) =>
+    pub.post<Env<KioskBookResult>>('/public/kiosk/book', { tenant_id: tenantId, ...payload }, vs).then((r) => r.data),
+};
+
+export interface KioskBookResult {
+  results: { identifier: string; desk_id: string | null; ok: boolean; status: string | null; msg: string | null }[];
+  booked: number;
+  total: number;
+  all_ok: boolean;
+}

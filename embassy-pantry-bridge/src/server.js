@@ -23,6 +23,7 @@ const { mockAggregate } = require('./mock');
 const orgHierarchy = require('./orgHierarchy'); // masters read (org/site/building/floor)
 const fmDb = require('./fmDb');                 // FM write pool (daily sync)
 const importHierarchy = require('./importHierarchy'); // Embassy -> FM upsert worker
+const importUsers = require('./importUsers');         // Embassy employees -> FM users
 
 const app = express();
 
@@ -133,8 +134,13 @@ app.post('/org/import', async function (req, res) {
   const orgId = parseInt(req.query.org_id || process.env.EMBASSY_ORG_ID || '13', 10);
   const tenantId = parseInt(req.query.tenant_id || process.env.FM_TENANT_ID || '10', 10);
   const dryRun = String(req.query.dry_run || '') === '1';
+  // ?only=hierarchy|users lets ops run a single stage; default runs both
+  // (hierarchy first so users can attach to freshly-synced organisations).
+  const only = String(req.query.only || '').toLowerCase();
   try {
-    const data = await importHierarchy.runImport({ orgId, tenantId, dryRun });
+    const data = {};
+    if (only !== 'users') data.hierarchy = await importHierarchy.runImport({ orgId, tenantId, dryRun });
+    if (only !== 'hierarchy') data.users = await importUsers.runImport({ orgId, tenantId, dryRun });
     return res.json({ status: true, data });
   } catch (err) {
     console.error('[bridge] org/import failed:', err && err.message);
@@ -280,15 +286,26 @@ function scheduleDailyFmSync() {
     console.log(`[bridge] next FM sync in ~${Math.round(delay / 60000)} min (daily ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}, org ${orgId} -> tenant ${tenantId})`);
     setTimeout(async function tick() {
       try {
+        // Hierarchy first so users can attach to freshly-synced organisations.
         const r = await importHierarchy.runImport({ orgId, tenantId, dryRun: false });
         console.log(
-          `[bridge] daily FM sync done: orgs(+${r.stats.organisations.inserted}/~${r.stats.organisations.updated}) ` +
+          `[bridge] daily FM sync (hierarchy): orgs(+${r.stats.organisations.inserted}/~${r.stats.organisations.updated}) ` +
           `sites(+${r.stats.sites.inserted}/~${r.stats.sites.updated}) buildings(+${r.stats.buildings.inserted}/~${r.stats.buildings.updated}) ` +
           `floors(+${r.stats.floors.inserted}/~${r.stats.floors.updated}) skipped=${r.skipped.length}`
         );
         if (r.skipped.length) r.skipped.forEach((s) => console.warn('   [skip] ' + s));
       } catch (e) {
-        console.error('[bridge] daily FM sync FAILED:', e && e.message);
+        console.error('[bridge] daily FM sync (hierarchy) FAILED:', e && e.message);
+      }
+      try {
+        const u = await importUsers.runImport({ orgId, tenantId, dryRun: false });
+        console.log(
+          `[bridge] daily FM sync (users): fetched=${u.fetched} ` +
+          `inserted=${u.stats.inserted} updated=${u.stats.updated} skipped=${u.stats.skipped}`
+        );
+        if (u.skipped.length) u.skipped.forEach((s) => console.warn('   [skip] ' + s));
+      } catch (e) {
+        console.error('[bridge] daily FM sync (users) FAILED:', e && e.message);
       }
       arm(); // re-arm for the next day regardless of outcome
     }, delay);

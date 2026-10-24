@@ -14,6 +14,7 @@ const checkinWindow = require('../../utils/checkinWindow');  // M15
 const graceConfig = require('../../utils/graceConfig');      // M3 grace resolution
 const mailer = require('../../utils/mailer');               // M15 check-in/out emails
 const ratingToken = require('../../utils/ratingToken');     // email-driven feedback
+const bookingsCtrl = require('../bookings/bookings.controller'); // reuse booking engine (doc 11 kiosk)
 
 async function resolveTenant(slug) {
   const rows = await query(
@@ -420,3 +421,282 @@ function parsePublicTags(raw) {
   }
   return [];
 }
+
+// ===== Kiosk booking (doc 11) =============================================
+// Public, tenant + organisation driven walk-up booking. The flow picks a
+// tenant, then an organisation, then a facility. No token — tenant_id / org_id
+// are plain params and every query is scoped to them. Booking identity is a
+// synced Embassy employee (work email / employee id). The booking WRITE reuses
+// the authed engine verbatim via invokeController — no divergent public logic.
+
+// Resolve the tenant id from query/body. Writes a 422 + returns null if absent.
+// Downstream queries are all scoped by this id, so an unknown id just yields
+// empty lists rather than leaking anything.
+function kioskTenant(req, res) {
+  const tid = intOrNull(req.query.tenant_id || (req.body && req.body.tenant_id));
+  if (tid === null) { fail(res, 'tenant_id is required', 422); return null; }
+  return tid;
+}
+
+// Invoke an asyncHandler-wrapped controller with a synthetic req; capture the
+// response it writes. Resolves { statusCode, body }. Lets the kiosk reuse
+// bookings.create / dayAvailability without duplicating their logic.
+function invokeController(handler, fakeReq) {
+  return new Promise((resolve, reject) => {
+    const cap = { statusCode: 200, body: null };
+    const fakeRes = {
+      status(code) { cap.statusCode = code; return this; },
+      json(obj) { cap.body = obj; resolve(cap); return this; },
+      set() { return this; },
+    };
+    Promise.resolve(handler(fakeReq, fakeRes, (err) => { if (err) reject(err); })).catch(reject);
+  });
+}
+
+function maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at <= 0) return null;
+  const name = s.slice(0, at);
+  const head = name.slice(0, 1);
+  return head + '***' + s.slice(at);
+}
+
+// Resolve a synced employee within the kiosk tenant by email OR employee id
+// (external_id). Must be active + approved to book. Returns the row or null.
+async function resolveKioskEmployee(tenantId, identifierRaw) {
+  const identifier = String(identifierRaw || '').trim();
+  if (!identifier) return null;
+  const isEmail = identifier.includes('@');
+  const rows = await query(
+    'SELECT id, name, lname, email, external_id, status, is_approved ' +
+    '  FROM `users` ' +
+    ' WHERE tenant_id = ? AND trash = 0 ' +
+    (isEmail ? '   AND email = ? ' : '   AND external_id = ? ') +
+    ' LIMIT 1',
+    [tenantId, isEmail ? identifier.toLowerCase() : identifier]
+  );
+  return rows[0] || null;
+}
+
+// Confirm a facility belongs to the kiosk tenant and is publicly bookable.
+async function kioskFacilityInTenant(tenantId, facilityId) {
+  const rows = await query(
+    'SELECT f.id FROM `facilities` f ' +
+    ' WHERE f.id = ? AND f.tenant_id = ? AND f.trash = 0 AND f.status = 1 LIMIT 1',
+    [facilityId, tenantId]
+  );
+  return rows.length > 0;
+}
+
+// GET /public/kiosk/tenants -> { tenants:[{id,name}] } — bookable tenants.
+exports.kioskTenants = asyncHandler(async function (_req, res) {
+  const tenants = await query(
+    "SELECT id, name FROM `tenants` WHERE trash = 0 AND status IN ('active','trial') ORDER BY name"
+  );
+  res.set('Cache-Control', 'no-store');
+  return ok(res, { tenants });
+});
+
+// GET /public/kiosk/organisations?tenant_id= -> { tenant, organisations }
+exports.kioskOrganisations = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const trows = await query('SELECT id, name FROM `tenants` WHERE id = ? AND trash = 0 LIMIT 1', [tenantId]);
+  if (trows.length === 0) return notFound(res, 'Tenant not found');
+  const orgs = await query(
+    'SELECT id, name FROM `organisations` WHERE tenant_id = ? AND trash = 0 AND status = 1 ORDER BY name',
+    [tenantId]
+  );
+  res.set('Cache-Control', 'no-store');
+  return ok(res, { tenant: trows[0], organisations: orgs });
+});
+
+// GET /public/kiosk/sites?tenant_id=&org_id= -> { sites:[{id,name,address}] }
+exports.kioskSites = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const orgId = intOrNull(req.query.org_id);
+  if (orgId === null) return fail(res, 'org_id is required', 422);
+  const orgRows = await query(
+    'SELECT id FROM `organisations` WHERE id = ? AND tenant_id = ? AND trash = 0 LIMIT 1',
+    [orgId, tenantId]
+  );
+  if (orgRows.length === 0) return notFound(res, 'Organisation not found');
+  const sites = await query(
+    'SELECT id, name, address FROM `sites` ' +
+    ' WHERE tenant_id = ? AND organisation_id = ? AND trash = 0 AND status = 1 ORDER BY name',
+    [tenantId, orgId]
+  );
+  res.set('Cache-Control', 'no-store');
+  return ok(res, { sites });
+});
+
+// GET /public/kiosk/facilities?tenant_id=&site_id= -> active facility cards for
+// the site. Facilities link to a SITE (facility.site_id), so we scope by site.
+// NOTE: no `public_listed` gate — that flag is for the anonymous public portal;
+// the kiosk is a tenant+site-scoped terminal and shows all active facilities.
+exports.kioskFacilities = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const siteId = intOrNull(req.query.site_id);
+  if (siteId === null) return fail(res, 'site_id is required', 422);
+  const siteRows = await query(
+    'SELECT id, name FROM `sites` WHERE id = ? AND tenant_id = ? AND trash = 0 AND status = 1 LIMIT 1',
+    [siteId, tenantId]
+  );
+  if (siteRows.length === 0) return notFound(res, 'Site not found');
+
+  const facilities = await query(
+    'SELECT f.id, f.name, f.type, f.capacity, f.image_url, s.name AS site_name, fl.name AS floor_name ' +
+    '  FROM `facilities` f ' +
+    '  INNER JOIN `sites`  s  ON s.id = f.site_id ' +
+    '  LEFT JOIN  `floors` fl ON fl.id = f.floor_id ' +
+    ' WHERE f.tenant_id = ? AND f.site_id = ? ' +
+    '   AND f.trash = 0 AND f.status = 1 ' +
+    ' ORDER BY f.name',
+    [tenantId, siteId]
+  );
+  res.set('Cache-Control', 'no-store');
+  return ok(res, { site: siteRows[0], facilities });
+});
+
+// GET /public/kiosk/facilities/:id/day?token=&date= -> reuse dayAvailability
+exports.kioskDay = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const facId = intOrNull(req.params.id);
+  if (facId === null) return fail(res, 'Invalid facility id', 400);
+  if (!(await kioskFacilityInTenant(tenantId, facId))) return notFound(res, 'Facility not found');
+
+  const captured = await invokeController(bookingsCtrl.dayAvailability, {
+    query: { facility_id: String(facId), date: String(req.query.date || ''), attendees: '1' },
+  });
+  return res.status(captured.statusCode).json(captured.body);
+});
+
+// GET /public/kiosk/facilities/:id?tenant_id= -> facility incl. layout_json
+// (for the desk canvas). Scoped to the kiosk tenant.
+exports.kioskFacilityDetail = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const facId = intOrNull(req.params.id);
+  if (facId === null) return fail(res, 'Invalid facility id', 400);
+  const rows = await query(
+    'SELECT id, name, type, capacity, layout_json FROM `facilities` ' +
+    ' WHERE id = ? AND tenant_id = ? AND trash = 0 AND status = 1 LIMIT 1',
+    [facId, tenantId]
+  );
+  if (rows.length === 0) return notFound(res, 'Facility not found');
+  res.set('Cache-Control', 'no-store');
+  return ok(res, { facility: rows[0] });
+});
+
+// GET /public/kiosk/facilities/:id/check?tenant_id=&start_at=&end_at=
+// Reuses bookings.check (occupied_desks for the exact window, from the
+// booking_desks junction) so the kiosk desk canvas greys out taken chairs
+// identically to the authed picker.
+exports.kioskCheck = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const facId = intOrNull(req.params.id);
+  if (facId === null) return fail(res, 'Invalid facility id', 400);
+  if (!(await kioskFacilityInTenant(tenantId, facId))) return notFound(res, 'Facility not found');
+
+  const captured = await invokeController(bookingsCtrl.check, {
+    user: { id: 0, role: 'employee', tenant_id: tenantId },
+    query: {
+      facility_id: String(facId),
+      start_at: String(req.query.start_at || ''),
+      end_at: String(req.query.end_at || ''),
+      attendees: '1',
+    },
+  });
+  return res.status(captured.statusCode).json(captured.body);
+});
+
+// POST /public/kiosk/identify { token, identifier } -> masked user or 404
+exports.kioskIdentify = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const emp = await resolveKioskEmployee(tenantId, (req.body || {}).identifier);
+  if (!emp) return fail(res, "We couldn't find you. Check your work email / employee ID, or see reception.", 404, { code: 'EMPLOYEE_NOT_FOUND' });
+  if (emp.status !== 1 || Number(emp.is_approved) !== 1) {
+    return fail(res, 'Your account is inactive. Please contact your administrator.', 403, { code: 'EMPLOYEE_INACTIVE' });
+  }
+  return ok(res, {
+    user: {
+      id: emp.id,
+      name: [emp.name, emp.lname].filter(Boolean).join(' ') || null,
+      masked_email: maskEmail(emp.email),
+    },
+  });
+});
+
+// POST /public/kiosk/book
+//   { tenant_id, facility_id, start_at, end_at, title?,
+//     assignments: [ { identifier, desk_id? }, ... ] }   // one booking per seat
+//   (legacy single-booking shape { identifier, desk_ids? } is still accepted)
+//
+// Each assignment is resolved to a synced employee and booked AS them through
+// the real engine — so a multi-seat kiosk booking becomes one booking per
+// person (each gets their own approval / check-in code / email). All employees
+// are validated up front so we don't half-book a group.
+exports.kioskBook = asyncHandler(async function (req, res) {
+  const tenantId = kioskTenant(req, res);
+  if (!tenantId) return;
+  const b = req.body || {};
+
+  const facilityId = intOrNull(b.facility_id);
+  if (facilityId === null) return fail(res, 'facility_id is required', 422);
+  if (!(await kioskFacilityInTenant(tenantId, facilityId))) return notFound(res, 'Facility not found');
+
+  // Normalise to an assignments list (at least one).
+  let assignments = Array.isArray(b.assignments) && b.assignments.length
+    ? b.assignments.map((a) => ({ identifier: a && a.identifier, desk_id: (a && a.desk_id) || null }))
+    : [{ identifier: b.identifier, desk_id: Array.isArray(b.desk_ids) ? (b.desk_ids[0] || null) : (b.desk_id || null) }];
+
+  // Resolve + validate EVERY employee before booking any — all-or-nothing on
+  // identity so a bad email doesn't leave a half-booked group.
+  const resolved = [];
+  for (const a of assignments) {
+    const emp = await resolveKioskEmployee(tenantId, a.identifier);
+    if (!emp) {
+      return fail(res, `We couldn't find an employee for "${a.identifier || '(blank)'}".`, 404,
+        { code: 'EMPLOYEE_NOT_FOUND', identifier: a.identifier || null });
+    }
+    if (emp.status !== 1 || Number(emp.is_approved) !== 1) {
+      return fail(res, `${a.identifier} is inactive and can't be booked.`, 403,
+        { code: 'EMPLOYEE_INACTIVE', identifier: a.identifier });
+    }
+    resolved.push({ emp, desk_id: a.desk_id });
+  }
+
+  // One booking per assignment, each through the authed engine.
+  const results = [];
+  for (const r of resolved) {
+    const captured = await invokeController(bookingsCtrl.create, {
+      user: { id: r.emp.id, role: 'employee', tenant_id: tenantId },
+      body: {
+        facility_id: facilityId,
+        start_at: b.start_at,
+        end_at: b.end_at,
+        title: (b.title && String(b.title).trim()) || 'Kiosk booking',
+        desk_id: r.desk_id || undefined,
+        channel: 'tablet',
+      },
+    });
+    const body = captured.body || {};
+    results.push({
+      identifier: r.emp.email,
+      desk_id: r.desk_id,
+      ok: !!body.status,
+      status: (body.data && body.data.status) || null,
+      msg: body.msg || null,
+    });
+  }
+
+  const booked = results.filter((x) => x.ok).length;
+  return ok(res, { results, booked, total: results.length, all_ok: booked === results.length },
+    booked === results.length ? 'Booked' : 'Some seats could not be booked');
+});

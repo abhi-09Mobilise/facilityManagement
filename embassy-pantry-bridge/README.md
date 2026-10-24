@@ -149,7 +149,17 @@ copies the Embassy org hierarchy into the FM database:
 0_org_pc_block    -> sites           (source_ref = id)
 0_org_pc_building -> buildings       (source_ref = id)
 0_org_pc_floor    -> floors          (source_ref = id, floor_img -> layout_image_url)
+
+1_user_master     -> users           (external_id = user id)   [runs after orgs]
+1_usr_pl_map      -> lookup only (user_id -> pl_id -> organisation)
 ```
+
+**Employees** are synced in the same daily run, right after organisations (so
+each user attaches to its org). Scope = employees with an active, in-date
+`1_usr_pl_map` row to a pl under org 13 — not all ~17k IFMS users. They're
+SSO-only (random non-login password); email is the SSO match key, so
+employees without an email import as `status=0`. Idempotent on
+`users.external_id` (migration 054).
 
 The bridge is the natural home for this: it already holds the Embassy
 connection, and *all* Embassy data (pantry + hierarchy) flows through here.

@@ -49,4 +49,17 @@ router.post('/checkout',                                     ctrl.checkout);
 router.get('/ratings/:token',                                ctrl.ratingBooking);
 router.post('/ratings/:token',                               ctrl.submitRating);
 
+// doc 11 - Kiosk booking (pick tenant -> organisation -> facility; identify by
+// email/emp-id; booking reuses the authed engine). Rate-limited by the bucket
+// above. tenant_id / org_id are plain params (no token).
+router.get('/kiosk/tenants',                                 ctrl.kioskTenants);
+router.get('/kiosk/organisations',                           ctrl.kioskOrganisations);
+router.get('/kiosk/sites',                                   ctrl.kioskSites);
+router.get('/kiosk/facilities',                              ctrl.kioskFacilities);
+router.get('/kiosk/facilities/:id',                          ctrl.kioskFacilityDetail);
+router.get('/kiosk/facilities/:id/day',                      ctrl.kioskDay);
+router.get('/kiosk/facilities/:id/check',                    ctrl.kioskCheck);
+router.post('/kiosk/identify',                               ctrl.kioskIdentify);
+router.post('/kiosk/book',                                   ctrl.kioskBook);
+
 module.exports = router;

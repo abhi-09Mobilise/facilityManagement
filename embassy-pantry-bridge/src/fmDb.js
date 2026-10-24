@@ -52,4 +52,8 @@ async function verifyConnection() {
   }
 }
 
-module.exports = { getConnection, query, verifyConnection };
+async function end() {
+  if (pool) { await pool.end(); pool = null; }
+}
+
+module.exports = { getConnection, query, verifyConnection, end };
