@@ -38,6 +38,20 @@ function cleanMobile(m) {
   return s ? s.slice(0, 20) : null;
 }
 
+// Embassy encrypts PII (name/lname/mobile) with Laravel Crypt — the ciphertext
+// is base64 of a {"iv":...} JSON, i.e. starts with "eyJpdiI6". Detect it so we
+// never store ciphertext in FM.
+function looksEncrypted(v) { return typeof v === 'string' && /^eyJpdiI6/.test(v.trim()); }
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+// Option (a): derive a readable display name from the email local-part, since
+// the Embassy `name` column is encrypted. "puneet.yadav@x" -> {Puneet, Yadav}.
+function deriveName(email) {
+  if (!email) return { name: null, lname: null };
+  const local = String(email).split('@')[0] || '';
+  const parts = local.split(/[._\-+]+/).filter(Boolean).map(cap);
+  return { name: parts[0] || null, lname: parts.slice(1).join(' ') || null };
+}
+
 // Live: employees with an active, in-date pl mapping to an org under `orgId`.
 // Ordered so the first row per user is their most recent pl mapping.
 async function fetchEmployeesLive(orgId) {
@@ -55,17 +69,23 @@ async function fetchEmployeesLive(orgId) {
   );
   const byUser = new Map();
   for (const r of rows) if (!byUser.has(r.id)) byUser.set(r.id, r); // first = most recent
-  return [...byUser.values()].map((r) => ({
-    id: Number(r.id),
-    email: (r.email || '').toLowerCase().trim() || null,
-    name: r.name || null,
-    lname: (r.lname && String(r.lname).trim()) || null,
-    mobile: cleanMobile(r.mobile),
-    designation: r.job_desc ? String(r.job_desc).slice(0, 80) : null,
-    status: Number(r.status) === 1 ? 1 : 0,
-    is_approved: String(r.is_approved) === '1' ? 1 : 0,
-    pl_id: Number(r.pl_id),
-  }));
+  return [...byUser.values()].map((r) => {
+    const email = (r.email || '').toLowerCase().trim() || null;
+    // Option (a): Embassy name/lname/mobile are Laravel-encrypted ciphertext.
+    // Derive a readable name from the email; drop any field that's ciphertext.
+    const dn = deriveName(email);
+    return {
+      id: Number(r.id),
+      email,
+      name: looksEncrypted(r.name) ? dn.name : ((r.name && String(r.name).trim()) || dn.name),
+      lname: looksEncrypted(r.lname) ? dn.lname : ((r.lname && String(r.lname).trim()) || dn.lname),
+      mobile: looksEncrypted(r.mobile) ? null : cleanMobile(r.mobile),
+      designation: looksEncrypted(r.job_desc) ? null : (r.job_desc ? String(r.job_desc).slice(0, 80) : null),
+      status: Number(r.status) === 1 ? 1 : 0,
+      is_approved: String(r.is_approved) === '1' ? 1 : 0,
+      pl_id: Number(r.pl_id),
+    };
+  });
 }
 
 // Small deterministic mock set (pl_ids match orgHierarchy.mockHierarchy).
