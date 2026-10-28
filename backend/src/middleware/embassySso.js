@@ -1,23 +1,17 @@
-// Embassy SSO handoff — token validator.
+// Embassy SSO — verify an Embassy-issued JWT so it can be exchanged for an FMS
+// token at POST /api/auth/sso/embassy.
 //
-// Verifies an HS256 JWT minted by the Embassy app, using the shared secret
-// at config.embassy.sharedSecret. The same secret is held by Embassy
-// (production) or by scripts/mint-test-handoff.js (local tests).
+// Embassy signs its session tokens (Laravel tymon/jwt-auth, HS256) with its own
+// secret. We verify with the SAME secret, provided here as EMBASSY_SHARED_SECRET
+// (config.embassy.sharedSecret) — kept SEPARATE from FMS's own JWT_SECRET so
+// adopting Embassy SSO never changes how FMS signs/verifies its own tokens.
 //
-// Called by sso.controller — does NOT act as express middleware itself;
-// returns a decoded payload or throws a well-typed error so the caller
-// can produce a user-friendly HTTP response.
+// We intentionally do NOT enforce iss/aud: an Embassy token's `iss` is Embassy's
+// own URL and it carries no `aud`, so those add nothing. The signature + expiry
+// prove authenticity; the only identity claim we need is `sub` (the Embassy user
+// id), which the exchange maps to users.external_id.
 //
-// Design notes:
-//   - HS256 chosen because Embassy and FMS share a single secret.
-//   - Treat the secret like a password — never log it, never commit it,
-//     rotate periodically. A leak on either side compromises both.
-//   - jti claim is REQUIRED to enable replay prevention (controller layer).
-//   - Clock skew tolerated per config (default ±60s) — real-world servers
-//     drift, and 401-ing legitimate users over 2s of skew is a terrible UX.
-//   - FMS does NOT trust the `role` claim in the token; after lookup the
-//     user's role comes from the FMS users table. This is deliberate —
-//     authorization is FMS's job, Embassy only vouches for identity.
+// Treat the secret like a password — never log it, rotate periodically.
 
 const jwt = require('jsonwebtoken');
 const config = require('../config');
@@ -32,64 +26,46 @@ class EmbassySsoError extends Error {
 }
 
 /**
- * Verify an Embassy-issued handoff JWT. Returns the decoded payload on
- * success or throws EmbassySsoError on any failure (wrong signature,
- * expired, wrong issuer/audience, missing email, etc.).
+ * Verify an Embassy-issued handoff/session JWT. Returns the decoded payload on
+ * success, or throws EmbassySsoError (wrong signature, expired, missing sub…).
  */
-function verifyHandoffToken(token) {
-  if (!config.embassy.ssoEnabled) {
-    throw new EmbassySsoError(
-      'EMBASSY_SSO_DISABLED',
-      'Embassy SSO is not enabled on this server.',
-      404,
-    );
-  }
+function verifyEmbassyToken(token) {
   if (!token || typeof token !== 'string') {
-    throw new EmbassySsoError('EMBASSY_SSO_NO_TOKEN', 'handoff_token is required', 400);
+    throw new EmbassySsoError('EMBASSY_SSO_NO_TOKEN', 'token is required', 400);
   }
 
   const secret = config.embassy.sharedSecret;
   if (!secret) {
     throw new EmbassySsoError(
       'EMBASSY_SSO_NO_SECRET',
-      'Embassy SSO is enabled but EMBASSY_SHARED_SECRET is not configured in .env.',
+      'EMBASSY_SHARED_SECRET is not configured on this server.',
       500,
     );
   }
-
+  console.log("EMBASSY SHARED :", secret);
   let decoded;
   try {
     decoded = jwt.verify(token, secret, {
       algorithms: ['HS256'],
-      issuer:   config.embassy.issuer,
-      audience: config.embassy.audience,
       clockTolerance: config.embassy.clockToleranceSec,
     });
   } catch (err) {
-    // Translate jsonwebtoken's errors to our own codes so the controller
-    // can log + respond consistently without parsing err.name strings.
     if (err.name === 'TokenExpiredError') {
-      throw new EmbassySsoError('EMBASSY_SSO_EXPIRED', 'Handoff token has expired', 401);
-    }
-    if (err.name === 'JsonWebTokenError') {
-      throw new EmbassySsoError('EMBASSY_SSO_INVALID', `Invalid handoff token: ${err.message}`, 401);
+      throw new EmbassySsoError('EMBASSY_SSO_EXPIRED', 'Embassy token has expired', 401);
     }
     if (err.name === 'NotBeforeError') {
-      throw new EmbassySsoError('EMBASSY_SSO_NOT_YET_VALID', 'Handoff token is not yet valid', 401);
+      throw new EmbassySsoError('EMBASSY_SSO_NOT_YET_VALID', 'Embassy token is not yet valid', 401);
     }
-    throw new EmbassySsoError('EMBASSY_SSO_VERIFY_FAILED', err.message || 'Verification failed', 401);
+    // JsonWebTokenError (bad signature, malformed, etc.)
+    throw new EmbassySsoError('EMBASSY_SSO_INVALID', `Invalid Embassy token: ${err.message}`, 401);
   }
 
-  // `email` is the canonical identifier used to find the FMS user. `sub`
-  // (Embassy user id) is logged for audit but no longer required.
-  if (!decoded.email) {
-    throw new EmbassySsoError('EMBASSY_SSO_NO_EMAIL', 'Handoff token missing email claim', 401);
-  }
-  if (!decoded.jti) {
-    throw new EmbassySsoError('EMBASSY_SSO_NO_JTI', 'Handoff token missing jti claim (required for replay prevention)', 401);
+  // `sub` (Embassy user id) is the identifier we map to users.external_id.
+  if (decoded.sub == null || String(decoded.sub).trim() === '') {
+    throw new EmbassySsoError('EMBASSY_SSO_NO_SUB', 'Embassy token is missing the sub claim', 401);
   }
 
   return decoded;
 }
 
-module.exports = { verifyHandoffToken, EmbassySsoError };
+module.exports = { verifyEmbassyToken, EmbassySsoError };
